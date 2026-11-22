@@ -16,6 +16,14 @@
   const ROOM_ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const PEER_ROOM_PREFIX = 'tdp-host-';
   const PEER_MEMBER_PREFIX = 'tdp-peer-';
+  const PEER_PROBE_PREFIX = 'tdp-probe-';
+
+  const OPEN_CHANNELS = [
+    { id: 'PEDRAO', title: 'Sala do Pedrão', desc: 'Sala principal da galera' },
+    { id: 'GAMES1', title: 'Games & Squad', desc: 'Gameplay e tela compartilhada' },
+    { id: 'CINE01', title: 'Cinema da Galera', desc: 'Vídeos, filmes e react' },
+    { id: 'LIVRE1', title: 'Sala Livre', desc: 'Resenha e transmissão rápida' }
+  ];
 
   const RESOLUTIONS = {
     '720p': { width: 1280, height: 720, label: '1280 × 720' },
@@ -31,6 +39,11 @@
         { urls: 'stun:stun1.l.google.com:19302' }
       ]
     }
+  };
+
+  const PROBE_PEER_CONFIG = {
+    debug: 0,
+    config: PEER_CONFIG.config
   };
 
   /* ------------------------------------------------------------------------
@@ -91,6 +104,16 @@
       lastVolumeBeforeMute: 100,
       statsTimer: null,
       controlsHideTimer: null
+    },
+
+    // Aba de Salas Abertas (Lobby)
+    lobby: {
+      activeTab: 'home', // 'home' | 'lobby'
+      probePeer: null,
+      scanSeq: 0,
+      scanning: false,
+      // Map<roomId, { status: 'checking'|'online'|'offline', ownerName, memberCount, maxParticipants, streamingCount }>
+      results: new Map()
     }
   };
 
@@ -105,6 +128,17 @@
     viewRoom: $('view-room'),
 
     // Landing
+    tabBtnHome: $('tab-btn-home'),
+    tabBtnLobby: $('tab-btn-lobby'),
+    tabPanelHome: $('tab-panel-home'),
+    tabPanelLobby: $('tab-panel-lobby'),
+    lobbyOnlineBadge: $('lobby-online-badge'),
+    inputLobbyName: $('input-lobby-name'),
+    btnRefreshLobby: $('btn-refresh-lobby'),
+    btnRefreshLobbyLabel: $('btn-refresh-lobby-label'),
+    lobbyChannelsGrid: $('lobby-channels-grid'),
+    lobbyRecentSection: $('lobby-recent-section'),
+    lobbyRecentList: $('lobby-recent-list'),
     inviteBanner: $('invite-banner'),
     inviteRoomCode: $('invite-room-code'),
     btnClearInvite: $('btn-clear-invite'),
@@ -348,6 +382,64 @@
     } catch (_) {}
   }
 
+  function loadSavedNickname() {
+    try {
+      return (localStorage.getItem('tdp_nickname') || '').slice(0, 24);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function saveNickname(name) {
+    try {
+      localStorage.setItem('tdp_nickname', (name || '').trim().slice(0, 24));
+    } catch (_) {}
+  }
+
+  function syncNicknameInputs(value, sourceInput = null) {
+    const clean = (value || '').slice(0, 24);
+    if (sourceInput !== el.inputHostName) el.inputHostName.value = clean;
+    if (sourceInput !== el.inputViewerName) el.inputViewerName.value = clean;
+    if (sourceInput !== el.inputLobbyName) el.inputLobbyName.value = clean;
+    saveNickname(clean);
+  }
+
+  function getNicknameOrDefault(fallback) {
+    const val = (
+      el.inputLobbyName.value ||
+      el.inputHostName.value ||
+      el.inputViewerName.value ||
+      ''
+    ).trim().slice(0, 24);
+    return val || fallback;
+  }
+
+  function isOpenChannelId(roomId) {
+    return OPEN_CHANNELS.some((ch) => ch.id === roomId);
+  }
+
+  function loadRecentRooms() {
+    try {
+      const raw = localStorage.getItem('tdp_recent_rooms');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((id) => typeof id === 'string' && id && !isOpenChannelId(id))
+        .slice(0, 4);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveRecentRoom(roomId) {
+    if (!roomId || isOpenChannelId(roomId)) return;
+    try {
+      const list = [roomId, ...loadRecentRooms().filter((id) => id !== roomId)].slice(0, 4);
+      localStorage.setItem('tdp_recent_rooms', JSON.stringify(list));
+    } catch (_) {}
+  }
+
   function ensurePeerJsLoaded() {
     if (typeof window.Peer === 'undefined') {
       showToast('PeerJS ainda não carregou. Verifique sua conexão e tente novamente.', 'error', 4500);
@@ -461,19 +553,22 @@
   /* ------------------------------------------------------------------------
      CRIAÇÃO DE SALA (CRIADOR / COORDENADOR)
   ------------------------------------------------------------------------ */
-  function createRoom(attempt = 1) {
+  function createRoom(attempt = 1, fixedRoomId = null, customName = null) {
     if (!ensurePeerJsLoaded()) return;
 
+    destroyLobbyPeer();
     if (attempt === 1) {
       cleanupSession(false);
     }
 
     const mySession = attempt === 1 ? ++state.sessionSeq : state.sessionSeq;
-    const maxAttempts = 5;
-    const roomId = generateShortRoomId();
+    const maxAttempts = fixedRoomId ? 1 : 5;
+    const roomId = fixedRoomId ? fixedRoomId.toUpperCase() : generateShortRoomId();
     const ownerPeerId = `${PEER_ROOM_PREFIX}${roomId.toLowerCase()}`;
-    const chosenName = (el.inputHostName.value || '').trim().slice(0, 24) || 'Pedrão';
+    const chosenName =
+      (customName || el.inputHostName.value || '').trim().slice(0, 24) || 'Pedrão';
 
+    saveNickname(chosenName);
     el.btnCreateRoom.disabled = true;
     el.btnCreateRoom.querySelector('span').textContent = 'Criando sala...';
 
@@ -514,6 +609,8 @@
         }
       ];
 
+      saveRecentRoom(roomId);
+
       el.btnCreateRoom.disabled = false;
       el.btnCreateRoom.querySelector('span').textContent = 'Criar Sala';
 
@@ -521,7 +618,10 @@
       switchView('room');
       setRoomStatus('connected', 'Sala aberta');
       startRoomStatsLoop();
-      showToast(`Sala ${roomId} criada! Envie o link para seus amigos.`, 'success');
+
+      const channelMeta = OPEN_CHANNELS.find((ch) => ch.id === roomId);
+      const label = channelMeta ? `${channelMeta.title} (${roomId})` : `Sala ${roomId}`;
+      showToast(`${label} aberta! Amigos já podem entrar.`, 'success');
     });
 
     peer.on('connection', (conn) => {
@@ -550,10 +650,20 @@
       clearTimeout(openTimeout);
       console.error('[Room Owner PeerJS]', err);
 
-      if (!opened && err.type === 'unavailable-id' && attempt < maxAttempts) {
+      if (!opened && err.type === 'unavailable-id') {
         peer.destroy();
-        createRoom(attempt + 1);
-        return;
+        if (fixedRoomId) {
+          // Outro amigo acabou de abrir essa mesma sala fixa -> entra direto nela
+          el.btnCreateRoom.disabled = false;
+          el.btnCreateRoom.querySelector('span').textContent = 'Criar Sala';
+          showToast('Essa sala acabou de ser aberta! Entrando...', 'info');
+          joinRoom(fixedRoomId, chosenName);
+          return;
+        }
+        if (attempt < maxAttempts) {
+          createRoom(attempt + 1);
+          return;
+        }
       }
 
       if (!opened) {
@@ -584,7 +694,10 @@
     }
 
     const memberName = (rawName || '').trim().slice(0, 24) || 'Amigo';
+    saveNickname(memberName);
+    saveRecentRoom(roomId);
 
+    destroyLobbyPeer();
     cleanupSession(false);
 
     const mySession = ++state.sessionSeq;
@@ -758,9 +871,29 @@
   ------------------------------------------------------------------------ */
   function handleOwnerIncomingDataConn(conn, mySession) {
     const memberId = conn.peer;
+    const isProbe = Boolean(conn.metadata && conn.metadata.probe === true);
 
     conn.on('open', () => {
       if (state.sessionSeq !== mySession || state.mode !== 'room' || !state.isOwner) return;
+
+      // Sonda rápida da aba "Salas Abertas": responde resumo sem entrar na sala
+      if (isProbe) {
+        const streamingCount = state.room.participants.filter((p) => p.isStreaming).length;
+        try {
+          conn.send({
+            type: 'probe-info',
+            roomId: state.roomId,
+            ownerName: state.localName,
+            memberCount: state.room.participants.length,
+            maxParticipants: MAX_PARTICIPANTS,
+            streamingCount
+          });
+        } catch (_) {}
+        window.setTimeout(() => {
+          try { conn.close(); } catch (_) {}
+        }, 300);
+        return;
+      }
 
       const alreadyIn = state.room.participants.some((p) => p.id === memberId);
       if (!alreadyIn && state.room.participants.length >= MAX_PARTICIPANTS) {
@@ -856,12 +989,12 @@
     });
 
     conn.on('close', () => {
-      if (state.sessionSeq !== mySession) return;
+      if (isProbe || state.sessionSeq !== mySession) return;
       removeMemberByOwner(memberId, true);
     });
 
     conn.on('error', () => {
-      if (state.sessionSeq !== mySession) return;
+      if (isProbe || state.sessionSeq !== mySession) return;
       removeMemberByOwner(memberId, false);
     });
   }
@@ -2522,7 +2655,321 @@
 
     if (returnToLanding) {
       switchView('landing');
+      refreshLobbyRooms();
     }
+  }
+
+  /* ------------------------------------------------------------------------
+     ABA DE SALAS ABERTAS (LOBBY P2P SEM BACKEND)
+  ------------------------------------------------------------------------ */
+  function switchLandingTab(tab) {
+    const isLobby = tab === 'lobby';
+    state.lobby.activeTab = isLobby ? 'lobby' : 'home';
+
+    el.tabBtnHome.classList.toggle('active', !isLobby);
+    el.tabBtnHome.setAttribute('aria-selected', String(!isLobby));
+    el.tabBtnLobby.classList.toggle('active', isLobby);
+    el.tabBtnLobby.setAttribute('aria-selected', String(isLobby));
+
+    el.tabPanelHome.classList.toggle('hidden', isLobby);
+    el.tabPanelLobby.classList.toggle('hidden', !isLobby);
+
+    if (isLobby) {
+      refreshLobbyRooms();
+    }
+  }
+
+  function destroyLobbyPeer() {
+    state.lobby.scanSeq += 1;
+    state.lobby.scanning = false;
+    if (state.lobby.probePeer) {
+      try { state.lobby.probePeer.destroy(); } catch (_) {}
+      state.lobby.probePeer = null;
+    }
+    if (el.btnRefreshLobby) {
+      el.btnRefreshLobby.disabled = false;
+      el.btnRefreshLobbyLabel.textContent = 'Atualizar';
+    }
+  }
+
+  function getAllLobbyTargets() {
+    const recentIds = loadRecentRooms();
+    const channelTargets = OPEN_CHANNELS.map((ch) => ({
+      id: ch.id,
+      title: ch.title,
+      desc: ch.desc,
+      isChannel: true
+    }));
+    const recentTargets = recentIds.map((id) => ({
+      id,
+      title: `Sala ${id}`,
+      desc: 'Sala recente por código',
+      isChannel: false
+    }));
+    return [...channelTargets, ...recentTargets];
+  }
+
+  function refreshLobbyRooms() {
+    if (state.mode !== 'landing') return;
+    if (typeof window.Peer === 'undefined') {
+      renderLobbyRooms();
+      return;
+    }
+
+    destroyLobbyPeer();
+
+    const scanId = ++state.lobby.scanSeq;
+    state.lobby.scanning = true;
+    el.btnRefreshLobby.disabled = true;
+    el.btnRefreshLobbyLabel.textContent = 'Buscando...';
+
+    const targets = getAllLobbyTargets();
+    targets.forEach((t) => {
+      state.lobby.results.set(t.id, { status: 'checking' });
+    });
+    renderLobbyRooms();
+
+    const probeId = `${PEER_PROBE_PREFIX}${Math.random().toString(36).slice(2, 9)}`;
+    const probePeer = new window.Peer(probeId, PROBE_PEER_CONFIG);
+    state.lobby.probePeer = probePeer;
+
+    const peerIdToRoomId = new Map();
+    targets.forEach((t) => {
+      peerIdToRoomId.set(`${PEER_ROOM_PREFIX}${t.id.toLowerCase()}`, t.id);
+    });
+
+    let remaining = targets.length;
+    const finishOne = (roomId, info) => {
+      if (state.lobby.scanSeq !== scanId) return;
+      const existing = state.lobby.results.get(roomId);
+      if (existing && existing.status !== 'checking') return;
+
+      state.lobby.results.set(roomId, info);
+      remaining -= 1;
+      renderLobbyRooms();
+
+      if (remaining <= 0) {
+        state.lobby.scanning = false;
+        el.btnRefreshLobby.disabled = false;
+        el.btnRefreshLobbyLabel.textContent = 'Atualizar';
+        if (state.lobby.probePeer === probePeer) {
+          try { probePeer.destroy(); } catch (_) {}
+          state.lobby.probePeer = null;
+        }
+      }
+    };
+
+    const masterTimeout = window.setTimeout(() => {
+      if (state.lobby.scanSeq !== scanId) return;
+      targets.forEach((t) => {
+        const cur = state.lobby.results.get(t.id);
+        if (!cur || cur.status === 'checking') {
+          finishOne(t.id, { status: 'offline' });
+        }
+      });
+    }, 4000);
+
+    probePeer.on('open', () => {
+      if (state.lobby.scanSeq !== scanId || state.mode !== 'landing') {
+        clearTimeout(masterTimeout);
+        return;
+      }
+
+      targets.forEach((t) => {
+        const targetPeerId = `${PEER_ROOM_PREFIX}${t.id.toLowerCase()}`;
+        let conn;
+        try {
+          conn = probePeer.connect(targetPeerId, {
+            reliable: true,
+            serialization: 'json',
+            metadata: { probe: true }
+          });
+        } catch (_) {
+          finishOne(t.id, { status: 'offline' });
+          return;
+        }
+
+        const itemTimer = window.setTimeout(() => {
+          try { conn.close(); } catch (_) {}
+          finishOne(t.id, { status: 'offline' });
+        }, 3200);
+
+        conn.on('data', (msg) => {
+          if (state.lobby.scanSeq !== scanId) return;
+          if (msg && msg.type === 'probe-info') {
+            clearTimeout(itemTimer);
+            finishOne(t.id, {
+              status: 'online',
+              ownerName: msg.ownerName || 'Criador',
+              memberCount: Number(msg.memberCount) || 1,
+              maxParticipants: Number(msg.maxParticipants) || MAX_PARTICIPANTS,
+              streamingCount: Number(msg.streamingCount) || 0
+            });
+            try { conn.close(); } catch (_) {}
+          }
+        });
+
+        conn.on('error', () => {
+          clearTimeout(itemTimer);
+          finishOne(t.id, { status: 'offline' });
+        });
+      });
+    });
+
+    probePeer.on('error', (err) => {
+      if (state.lobby.scanSeq !== scanId) return;
+      if (err && err.type === 'peer-unavailable' && typeof err.message === 'string') {
+        for (const [peerId, roomId] of peerIdToRoomId.entries()) {
+          if (err.message.includes(peerId)) {
+            finishOne(roomId, { status: 'offline' });
+            return;
+          }
+        }
+      }
+      if (err && (err.type === 'network' || err.type === 'server-error')) {
+        clearTimeout(masterTimeout);
+        targets.forEach((t) => finishOne(t.id, { status: 'offline' }));
+      }
+    });
+  }
+
+  function createLobbyCardElement(target, info) {
+    const isOnline = info && info.status === 'online';
+    const isChecking = info && info.status === 'checking';
+    const isLive = isOnline && info.streamingCount > 0;
+    const isFull = isOnline && info.memberCount >= info.maxParticipants;
+
+    const card = document.createElement('article');
+    card.className = `lobby-card ${isLive ? 'is-live' : isOnline ? 'is-online' : ''}`;
+
+    const top = document.createElement('div');
+    top.className = 'lobby-card-top';
+
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'lobby-card-title-wrap';
+
+    const title = document.createElement('h3');
+    title.className = 'lobby-card-title';
+    title.textContent = target.title;
+
+    const desc = document.createElement('p');
+    desc.className = 'lobby-card-desc';
+    desc.textContent = target.desc;
+
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(desc);
+
+    const statusChip = document.createElement('span');
+    statusChip.className = `lobby-status-chip ${isLive ? 'live' : isOnline ? 'online' : ''}`;
+
+    const dot = document.createElement('span');
+    dot.className = 'lobby-status-dot';
+    const statusText = document.createElement('span');
+    if (isChecking) {
+      statusText.textContent = 'Verificando...';
+    } else if (isLive) {
+      statusText.textContent = `${info.streamingCount} ao vivo`;
+    } else if (isOnline) {
+      statusText.textContent = 'Aberta';
+    } else {
+      statusText.textContent = 'Disponível';
+    }
+
+    statusChip.appendChild(dot);
+    statusChip.appendChild(statusText);
+
+    top.appendChild(titleWrap);
+    top.appendChild(statusChip);
+
+    const bottom = document.createElement('div');
+    bottom.className = 'lobby-card-bottom';
+
+    const meta = document.createElement('div');
+    meta.className = 'lobby-card-meta';
+
+    const line1 = document.createElement('span');
+    if (isOnline) {
+      line1.textContent = `${info.ownerName} • ${info.memberCount}/${info.maxParticipants} na sala`;
+    } else if (isChecking) {
+      line1.textContent = 'Consultando status P2P...';
+    } else {
+      line1.textContent = target.isChannel
+        ? 'Ninguém aqui ainda — abra em 1 clique'
+        : 'Sala offline no momento';
+    }
+
+    const code = document.createElement('span');
+    code.className = 'lobby-card-code';
+    code.textContent = `Código: ${target.id}`;
+
+    meta.appendChild(line1);
+    meta.appendChild(code);
+
+    const actionBtn = document.createElement('button');
+    actionBtn.type = 'button';
+
+    if (isOnline) {
+      actionBtn.className = 'btn btn-primary';
+      actionBtn.disabled = isFull;
+      actionBtn.textContent = isFull ? 'Lotada' : 'Entrar';
+      actionBtn.addEventListener('click', () => {
+        joinRoom(target.id, getNicknameOrDefault('Amigo'));
+      });
+    } else if (target.isChannel) {
+      actionBtn.className = 'btn btn-secondary';
+      actionBtn.textContent = 'Abrir Sala';
+      actionBtn.addEventListener('click', () => {
+        createRoom(1, target.id, getNicknameOrDefault('Pedrão'));
+      });
+    } else {
+      actionBtn.className = 'btn btn-ghost';
+      actionBtn.textContent = 'Tentar Entrar';
+      actionBtn.addEventListener('click', () => {
+        joinRoom(target.id, getNicknameOrDefault('Amigo'));
+      });
+    }
+
+    bottom.appendChild(meta);
+    bottom.appendChild(actionBtn);
+
+    card.appendChild(top);
+    card.appendChild(bottom);
+    return card;
+  }
+
+  function renderLobbyRooms() {
+    el.lobbyChannelsGrid.replaceChildren();
+    el.lobbyRecentList.replaceChildren();
+
+    const recentIds = loadRecentRooms();
+    let onlineCount = 0;
+
+    OPEN_CHANNELS.forEach((ch) => {
+      const info = state.lobby.results.get(ch.id) || { status: 'offline' };
+      if (info.status === 'online') onlineCount += 1;
+      el.lobbyChannelsGrid.appendChild(
+        createLobbyCardElement(
+          { id: ch.id, title: ch.title, desc: ch.desc, isChannel: true },
+          info
+        )
+      );
+    });
+
+    el.lobbyRecentSection.classList.toggle('hidden', recentIds.length === 0);
+    recentIds.forEach((id) => {
+      const info = state.lobby.results.get(id) || { status: 'offline' };
+      if (info.status === 'online') onlineCount += 1;
+      el.lobbyRecentList.appendChild(
+        createLobbyCardElement(
+          { id, title: `Sala ${id}`, desc: 'Sala recente por código', isChannel: false },
+          info
+        )
+      );
+    });
+
+    el.lobbyOnlineBadge.textContent =
+      onlineCount === 1 ? '1 online' : `${onlineCount} online`;
+    el.tabBtnLobby.classList.toggle('has-online', onlineCount > 0);
   }
 
   /* ------------------------------------------------------------------------
@@ -2558,6 +3005,18 @@
      BIND DE EVENTOS DA INTERFACE
   ------------------------------------------------------------------------ */
   function bindEvents() {
+    // Abas da Tela Inicial
+    el.tabBtnHome.addEventListener('click', () => switchLandingTab('home'));
+    el.tabBtnLobby.addEventListener('click', () => switchLandingTab('lobby'));
+    el.btnRefreshLobby.addEventListener('click', refreshLobbyRooms);
+
+    // Sincronização de apelido entre abas e formulários
+    [el.inputHostName, el.inputViewerName, el.inputLobbyName].forEach((input) => {
+      input.addEventListener('input', () => {
+        syncNicknameInputs(input.value, input);
+      });
+    });
+
     // Landing: Criar Sala
     el.formCreateRoom.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -2809,10 +3268,22 @@
      INICIALIZAÇÃO
   ------------------------------------------------------------------------ */
   function init() {
+    const savedNick = loadSavedNickname();
+    if (savedNick) {
+      syncNicknameInputs(savedNick);
+    }
     updateBitrateSliderUI();
     updateVolumeUI();
+    renderLobbyRooms();
     bindEvents();
     checkInitialRoomParam();
+
+    // Verifica em segundo plano se já há salas abertas para atualizar o badge da aba
+    window.setTimeout(() => {
+      if (state.mode === 'landing') {
+        refreshLobbyRooms();
+      }
+    }, 350);
   }
 
   if (document.readyState === 'loading') {

@@ -558,6 +558,267 @@ input:focus-visible,
   opacity: 0.4;
 }
 
+/* Abas & Salas Abertas na Landing */
+.landing-tabs {
+  display: inline-flex;
+  align-self: center;
+  gap: 6px;
+  padding: 5px;
+  border-radius: var(--radius-pill);
+  background: rgba(13, 17, 26, 0.9);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.landing-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  border-radius: var(--radius-pill);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: background-color var(--transition), color var(--transition), box-shadow var(--transition);
+}
+
+.landing-tab-btn:hover:not(.active) {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.landing-tab-btn.active {
+  background: linear-gradient(135deg, var(--accent) 0%, #4f46e5 100%);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+}
+
+.lobby-tab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.landing-tab-btn.has-online .lobby-tab-dot {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+
+.lobby-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+}
+
+.landing-tab-btn.has-online .lobby-badge {
+  background: rgba(16, 185, 129, 0.22);
+  color: #6ee7b7;
+}
+
+.landing-tab-btn.active .lobby-badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.lobby-panel {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.lobby-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.lobby-toolbar-info h2 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.lobby-toolbar-info p {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  max-width: 500px;
+}
+
+.lobby-toolbar-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lobby-nick-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lobby-nick-wrap label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.lobby-nick-wrap .input {
+  width: 180px;
+  padding: 9px 12px;
+  font-size: 0.88rem;
+}
+
+.lobby-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.lobby-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px;
+  border-radius: var(--radius-md);
+  background: rgba(13, 17, 26, 0.85);
+  border: 1px solid var(--border);
+  transition: border-color var(--transition), transform var(--transition), box-shadow var(--transition);
+}
+
+.lobby-card:hover {
+  border-color: var(--border-strong);
+}
+
+.lobby-card.is-online {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: linear-gradient(145deg, rgba(16, 185, 129, 0.08), rgba(13, 17, 26, 0.92));
+}
+
+.lobby-card.is-live {
+  border-color: rgba(244, 63, 94, 0.42);
+  background: linear-gradient(145deg, rgba(244, 63, 94, 0.08), rgba(13, 17, 26, 0.92));
+}
+
+.lobby-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lobby-card-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lobby-card-title {
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.lobby-card-desc {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.lobby-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+}
+
+.lobby-status-chip.online {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: var(--success-soft);
+  color: #6ee7b7;
+}
+
+.lobby-status-chip.live {
+  border-color: rgba(244, 63, 94, 0.45);
+  background: var(--live-soft);
+  color: #fda4af;
+}
+
+.lobby-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.lobby-card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lobby-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.lobby-card-code {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.lobby-recent-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.lobby-recent-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lobby-recent-header h3 {
+  font-size: 0.96rem;
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .lobby-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lobby-nick-wrap .input {
+    width: 100%;
+  }
+}
+
 /* =========================================================
    TOPBAR COMUM (HOST & VIEWER)
 ========================================================= */

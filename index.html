@@ -71,28 +71,150 @@
         <button type="button" id="btn-clear-invite" class="btn-ghost-sm">Limpar</button>
       </div>
 
-      <section class="landing-grid" aria-label="Escolha como entrar">
-        <!-- Card Criar Sala -->
-        <article class="glass-card landing-card card-host">
-          <div class="card-icon icon-indigo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2" y="3" width="20" height="14" rx="2"/>
-              <path d="M8 21h8"/>
-              <path d="M12 17v4"/>
-              <circle cx="12" cy="10" r="2.5" fill="currentColor" stroke="none"/>
-            </svg>
-          </div>
-          <h2>Criar Nova Sala</h2>
-          <p class="card-desc">
-            Gera um código curto e link direto com <code>?room=ID</code>. Você e seus amigos podem compartilhar tela e assistir uns aos outros.
-          </p>
+      <!-- Abas da Tela Inicial: Início vs Salas Abertas -->
+      <nav class="landing-tabs" role="tablist" aria-label="Navegação inicial">
+        <button
+          type="button"
+          id="tab-btn-home"
+          class="landing-tab-btn active"
+          role="tab"
+          aria-selected="true"
+          aria-controls="tab-panel-home"
+        >
+          <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          <span>Criar / Código</span>
+        </button>
 
-          <form id="form-create-room" class="card-form">
-            <div class="field-group">
-              <label for="input-host-name">Seu apelido (opcional)</label>
+        <button
+          type="button"
+          id="tab-btn-lobby"
+          class="landing-tab-btn"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tab-panel-lobby"
+        >
+          <span class="lobby-tab-dot" aria-hidden="true"></span>
+          <span>Salas Abertas</span>
+          <span id="lobby-online-badge" class="lobby-badge mono">0 online</span>
+        </button>
+      </nav>
+
+      <!-- Aba 1: Criar / Entrar por Código -->
+      <div id="tab-panel-home" role="tabpanel" aria-labelledby="tab-btn-home">
+        <section class="landing-grid" aria-label="Escolha como entrar">
+          <!-- Card Criar Sala -->
+          <article class="glass-card landing-card card-host">
+            <div class="card-icon icon-indigo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                <path d="M8 21h8"/>
+                <path d="M12 17v4"/>
+                <circle cx="12" cy="10" r="2.5" fill="currentColor" stroke="none"/>
+              </svg>
+            </div>
+            <h2>Criar Nova Sala</h2>
+            <p class="card-desc">
+              Gera um código curto e link direto com <code>?room=ID</code>. Você e seus amigos podem compartilhar tela e assistir uns aos outros.
+            </p>
+
+            <form id="form-create-room" class="card-form">
+              <div class="field-group">
+                <label for="input-host-name">Seu apelido (opcional)</label>
+                <input
+                  type="text"
+                  id="input-host-name"
+                  class="input"
+                  maxlength="24"
+                  placeholder="Ex: Pedrão"
+                  autocomplete="nickname"
+                />
+              </div>
+
+              <button type="submit" id="btn-create-room" class="btn btn-primary btn-lg btn-block">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+                <span>Criar Sala</span>
+              </button>
+            </form>
+
+            <ul class="feature-chips" aria-label="Recursos da sala">
+              <li>720p / 1080p</li>
+              <li>30 / 60 FPS</li>
+              <li>1–6 Mbps Cap</li>
+              <li>Multi-Transmissão</li>
+            </ul>
+          </article>
+
+          <!-- Card Entrar na Sala -->
+          <article id="card-join-viewer" class="glass-card landing-card card-viewer">
+            <div class="card-icon icon-cyan">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+            </div>
+            <h2>Entrar em uma Sala</h2>
+            <p class="card-desc">
+              Cole o código curto ou o link completo da sala para assistir em modo cinema — e transmitir a sua tela também quando quiser.
+            </p>
+
+            <form id="form-join-room" class="card-form">
+              <div class="field-group">
+                <label for="input-room-id">Código da Sala ou Link</label>
+                <input
+                  type="text"
+                  id="input-room-id"
+                  class="input input-mono"
+                  placeholder="Ex: K7M3P9 ou ?room=K7M3P9"
+                  autocomplete="off"
+                  spellcheck="false"
+                  required
+                />
+              </div>
+
+              <div class="field-group">
+                <label for="input-viewer-name">Seu apelido (opcional)</label>
+                <input
+                  type="text"
+                  id="input-viewer-name"
+                  class="input"
+                  maxlength="24"
+                  placeholder="Ex: Lucas"
+                  autocomplete="nickname"
+                />
+              </div>
+
+              <button type="submit" id="btn-join-room" class="btn btn-secondary btn-lg btn-block">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+                  <polyline points="10 17 15 12 10 7"/>
+                  <line x1="15" y1="12" x2="3" y2="12"/>
+                </svg>
+                <span>Entrar na Sala</span>
+              </button>
+            </form>
+          </article>
+        </section>
+      </div>
+
+      <!-- Aba 2: Salas Abertas (Canais Rápidos da Galera + Recentes) -->
+      <div id="tab-panel-lobby" class="lobby-panel glass-card hidden" role="tabpanel" aria-labelledby="tab-btn-lobby">
+        <div class="lobby-toolbar">
+          <div class="lobby-toolbar-info">
+            <h2>Salas Abertas da Galera</h2>
+            <p>
+              Salas fixas visíveis para todos que abrirem o site: clique em <strong>Entrar</strong> em uma sala online ou <strong>Abrir Sala</strong> para iniciar uma na hora.
+            </p>
+          </div>
+
+          <div class="lobby-toolbar-controls">
+            <div class="lobby-nick-wrap">
+              <label for="input-lobby-name">Seu apelido</label>
               <input
                 type="text"
-                id="input-host-name"
+                id="input-lobby-name"
                 class="input"
                 maxlength="24"
                 placeholder="Ex: Pedrão"
@@ -100,71 +222,29 @@
               />
             </div>
 
-            <button type="submit" id="btn-create-room" class="btn btn-primary btn-lg btn-block">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 5v14M5 12h14"/>
+            <button type="button" id="btn-refresh-lobby" class="btn btn-secondary">
+              <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"/>
+                <polyline points="1 20 1 14 7 14"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
               </svg>
-              <span>Criar Sala</span>
+              <span id="btn-refresh-lobby-label">Atualizar</span>
             </button>
-          </form>
-
-          <ul class="feature-chips" aria-label="Recursos da sala">
-            <li>720p / 1080p</li>
-            <li>30 / 60 FPS</li>
-            <li>1–6 Mbps Cap</li>
-            <li>Multi-Transmissão</li>
-          </ul>
-        </article>
-
-        <!-- Card Entrar na Sala -->
-        <article id="card-join-viewer" class="glass-card landing-card card-viewer">
-          <div class="card-icon icon-cyan">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
           </div>
-          <h2>Entrar em uma Sala</h2>
-          <p class="card-desc">
-            Cole o código curto ou o link completo da sala para assistir em modo cinema — e transmitir a sua tela também quando quiser.
-          </p>
+        </div>
 
-          <form id="form-join-room" class="card-form">
-            <div class="field-group">
-              <label for="input-room-id">Código da Sala ou Link</label>
-              <input
-                type="text"
-                id="input-room-id"
-                class="input input-mono"
-                placeholder="Ex: K7M3P9 ou ?room=K7M3P9"
-                autocomplete="off"
-                spellcheck="false"
-                required
-              />
-            </div>
+        <div id="lobby-channels-grid" class="lobby-grid">
+          <!-- Renderizado dinamicamente -->
+        </div>
 
-            <div class="field-group">
-              <label for="input-viewer-name">Seu apelido (opcional)</label>
-              <input
-                type="text"
-                id="input-viewer-name"
-                class="input"
-                maxlength="24"
-                placeholder="Ex: Lucas"
-                autocomplete="nickname"
-              />
-            </div>
-
-            <button type="submit" id="btn-join-room" class="btn btn-secondary btn-lg btn-block">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
-                <polyline points="10 17 15 12 10 7"/>
-                <line x1="15" y1="12" x2="3" y2="12"/>
-              </svg>
-              <span>Entrar na Sala</span>
-            </button>
-          </form>
-        </article>
-      </section>
+        <div id="lobby-recent-section" class="lobby-recent-section hidden">
+          <div class="lobby-recent-header">
+            <h3>Salas Recentes por Código</h3>
+            <span class="hint">Salas personalizadas que você visitou recentemente</span>
+          </div>
+          <div id="lobby-recent-list" class="lobby-grid"></div>
+        </div>
+      </div>
 
       <footer class="landing-footer">
         <span>STUN: <code>stun.l.google.com:19302</code> &amp; <code>stun1.l.google.com:19302</code></span>
