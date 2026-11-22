@@ -73,6 +73,8 @@
     tx: {
       resolution: '1080p',
       fps: 60,
+      bandwidthMode: 'auto', // 'auto' (divide teto total) | 'fixed' (fixo por espectador)
+      totalBudgetMbps: 15.0,
       bitrateMbps: 2.5,
       degradationPreference: 'maintain-resolution',
       captureAudio: true,
@@ -223,11 +225,16 @@
     resolutionButtons: Array.from(document.querySelectorAll('[data-resolution]')),
     fpsButtons: Array.from(document.querySelectorAll('[data-fps]')),
     priorityButtons: Array.from(document.querySelectorAll('[data-priority]')),
+    bwModeButtons: Array.from(document.querySelectorAll('[data-bw-mode]')),
     labelResolutionDetail: $('label-resolution-detail'),
     labelFpsDetail: $('label-fps-detail'),
     labelPriorityDetail: $('label-priority-detail'),
+    labelBwModeDetail: $('label-bw-mode-detail'),
+    labelBitrateSlider: $('label-bitrate-slider'),
     sliderBitrate: $('slider-bitrate'),
+    sliderBitrateTicks: $('slider-bitrate-ticks'),
     bitrateValueBadge: $('bitrate-value-badge'),
+    bitrateEstimateLabel: $('bitrate-estimate-label'),
     bitrateMax6Estimate: $('bitrate-max-6-estimate'),
     checkboxSystemAudio: $('checkbox-system-audio'),
     txRealUpload: $('tx-real-upload'),
@@ -449,9 +456,105 @@
   }
 
   /* ------------------------------------------------------------------------
-     CONTROLE DE BANDA OBRIGATÓRIO (WebRTC RTCRtpSender.setParameters)
+     CONTROLE DE BANDA OBRIGATÓRIO (WebRTC RTCRtpSender.setParameters + SDP)
      Aplica maxBitrate na track de vídeo de cada peer conectado via peer.call()
   ------------------------------------------------------------------------ */
+  function getActiveOutboundViewerCount() {
+    if (state.tx.outboundCalls.size > 0) {
+      return state.tx.outboundCalls.size;
+    }
+    const myId = state.peer ? state.peer.id : null;
+    const remoteCount = state.room.participants.filter((p) => p.id !== myId).length;
+    return Math.min(MAX_REMOTE_VIEWERS, Math.max(1, remoteCount));
+  }
+
+  function getEffectivePerViewerBitrateMbps() {
+    if (state.tx.bandwidthMode === 'fixed') {
+      return Math.min(15, Math.max(1, Number(state.tx.bitrateMbps) || 2.5));
+    }
+    const viewers = getActiveOutboundViewerCount();
+    const divided = state.tx.totalBudgetMbps / viewers;
+    return Math.min(30, Math.max(0.5, Math.round(divided * 10) / 10));
+  }
+
+  function boostVideoSdpBitrate(sdp, maxKbps) {
+    try {
+      if (!sdp || !maxKbps) return sdp;
+      const eol = sdp.includes('\r\n') ? '\r\n' : '\n';
+      const lines = sdp.split(eol);
+      const videoStart = lines.findIndex((l) => l.startsWith('m=video '));
+      if (videoStart === -1) return sdp;
+
+      let videoEnd = lines.length;
+      for (let i = videoStart + 1; i < lines.length; i++) {
+        if (lines[i].startsWith('m=')) {
+          videoEnd = i;
+          break;
+        }
+      }
+
+      const codecPts = new Set();
+      for (let i = videoStart + 1; i < videoEnd; i++) {
+        const m = lines[i].match(/^a=rtpmap:(\d+)\s+(VP8|VP9|H264|AV1)\//i);
+        if (m) codecPts.add(m[1]);
+      }
+
+      const startKbps = Math.min(maxKbps, Math.max(1500, Math.round(maxKbps * 0.4)));
+      const out = [];
+      let insertedBandwidth = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const inVideo = i >= videoStart && i < videoEnd;
+
+        if (inVideo) {
+          if (line.startsWith('b=AS:') || line.startsWith('b=TIAS:')) {
+            continue;
+          }
+
+          if (line.startsWith('a=fmtp:')) {
+            const ptMatch = line.match(/^a=fmtp:(\d+)\s+(.*)$/);
+            if (ptMatch && codecPts.has(ptMatch[1])) {
+              const cleanedParams = ptMatch[2]
+                .split(';')
+                .map((p) => p.trim())
+                .filter(
+                  (p) =>
+                    p &&
+                    !p.startsWith('x-google-max-bitrate=') &&
+                    !p.startsWith('x-google-start-bitrate=') &&
+                    !p.startsWith('x-google-min-bitrate=')
+                );
+              cleanedParams.push(`x-google-start-bitrate=${startKbps}`);
+              cleanedParams.push(`x-google-max-bitrate=${maxKbps}`);
+              out.push(`a=fmtp:${ptMatch[1]} ${cleanedParams.join(';')}`);
+              continue;
+            }
+          }
+
+          out.push(line);
+
+          if (!insertedBandwidth && line.startsWith('c=')) {
+            out.push(`b=AS:${maxKbps}`);
+            insertedBandwidth = true;
+          } else if (i === videoStart && !insertedBandwidth) {
+            const nextLine = lines[i + 1] || '';
+            if (!nextLine.startsWith('c=')) {
+              out.push(`b=AS:${maxKbps}`);
+              insertedBandwidth = true;
+            }
+          }
+        } else {
+          out.push(line);
+        }
+      }
+
+      return out.join(eol);
+    } catch (_) {
+      return sdp;
+    }
+  }
+
   function enqueueBitrateLimit(outboundRecord, bitrateMbps) {
     if (!outboundRecord || !outboundRecord.call) return Promise.resolve(false);
     const pc = outboundRecord.call.peerConnection;
@@ -515,7 +618,7 @@
 
     const enforceNow = () => {
       if (state.mode !== 'room' || outboundRecord.call !== call) return;
-      enqueueBitrateLimit(outboundRecord, state.tx.bitrateMbps);
+      enqueueBitrateLimit(outboundRecord, getEffectivePerViewerBitrateMbps());
     };
 
     // 1. Aplica imediatamente após peer.call()
@@ -538,15 +641,18 @@
     window.setTimeout(enforceNow, 750);
   }
 
-  function applyBitrateToAllOutbound() {
+  function applyBitrateToAllOutbound({ silent = false } = {}) {
+    const perViewerMbps = getEffectivePerViewerBitrateMbps();
     const tasks = [];
     state.tx.outboundCalls.forEach((record) => {
       if (record.call && record.call.peerConnection) {
-        tasks.push(enqueueBitrateLimit(record, state.tx.bitrateMbps));
+        tasks.push(enqueueBitrateLimit(record, perViewerMbps));
       }
     });
-    updateTxBandwidthSummary();
-    notifyLocalStreamState();
+    updateBitrateSliderUI();
+    if (!silent) {
+      notifyLocalStreamState();
+    }
     return Promise.all(tasks);
   }
 
@@ -912,6 +1018,17 @@
       const memberName = rawName.slice(0, 24) || `Amigo ${fallbackNum}`;
 
       state.room.memberConns.set(memberId, conn);
+      conn._lastSeenAt = Date.now();
+
+      if (conn.peerConnection) {
+        conn.peerConnection.addEventListener('iceconnectionstatechange', () => {
+          if (state.sessionSeq !== mySession || !state.isOwner) return;
+          const iceState = conn.peerConnection.iceConnectionState;
+          if (iceState === 'failed' || iceState === 'closed') {
+            removeMemberByOwner(memberId, true);
+          }
+        });
+      }
 
       if (!alreadyIn) {
         state.room.participants.push({
@@ -936,10 +1053,16 @@
 
     conn.on('data', (msg) => {
       if (state.sessionSeq !== mySession || !msg || typeof msg !== 'object') return;
+      conn._lastSeenAt = Date.now();
       const participant = state.room.participants.find((p) => p.id === memberId);
       if (!participant) return;
 
       switch (msg.type) {
+        case 'leave': {
+          removeMemberByOwner(memberId, true);
+          try { conn.close(); } catch (_) {}
+          break;
+        }
         case 'join': {
           if (typeof msg.name === 'string' && msg.name.trim()) {
             participant.name = msg.name.trim().slice(0, 24);
@@ -1183,12 +1306,14 @@
     const myId = state.peer ? state.peer.id : null;
 
     // 1. Limpa chamadas de saída de quem saiu da sala
+    let outboundCountChanged = false;
     state.tx.outboundCalls.forEach((record, peerId) => {
       if (!activeIds.has(peerId)) {
         if (record.call) {
           try { record.call.close(); } catch (_) {}
         }
         state.tx.outboundCalls.delete(peerId);
+        outboundCountChanged = true;
       } else {
         const p = state.room.participants.find((x) => x.id === peerId);
         if (p) record.name = p.name;
@@ -1197,7 +1322,9 @@
 
     // 2. Se estou transmitindo, chama qualquer participante novo na sala
     if (state.tx.stream) {
-      syncOutboundCallsWithRoster();
+      if (syncOutboundCallsWithRoster() || (outboundCountChanged && state.tx.bandwidthMode === 'auto')) {
+        applyBitrateToAllOutbound({ silent: true });
+      }
     }
 
     // 3. Limpa streams recebidos de quem saiu ou parou de transmitir
@@ -1231,7 +1358,7 @@
     }
 
     updateRoomCountersAndBadges();
-    updateTxBandwidthSummary();
+    updateBitrateSliderUI();
     renderStreamSwitcher();
     renderParticipantsList();
     syncPlayerStage();
@@ -1281,7 +1408,8 @@
       captureWidth: settings.width || null,
       captureHeight: settings.height || null,
       fps: state.tx.fps,
-      maxBitrate: state.tx.bitrateMbps,
+      maxBitrate: getEffectivePerViewerBitrateMbps(),
+      bandwidthMode: state.tx.bandwidthMode,
       degradationPreference: state.tx.degradationPreference,
       qualityLimitationReason: state.tx.qualityLimitationReason || 'none',
       hasAudio
@@ -1406,7 +1534,7 @@
             replaceJobs.push(
               vSender
                 .replaceTrack(newVideoTrack)
-                .then(() => enqueueBitrateLimit(record, state.tx.bitrateMbps))
+                .then(() => enqueueBitrateLimit(record, getEffectivePerViewerBitrateMbps()))
                 .catch(() => {
                   const p = state.room.participants.find((x) => x.id === record.peerId);
                   if (p) callParticipantWithLocalStream(p);
@@ -1462,10 +1590,11 @@
   }
 
   function syncOutboundCallsWithRoster() {
-    if (!state.tx.stream || !state.peer) return;
+    if (!state.tx.stream || !state.peer) return false;
     const myId = state.peer.id;
 
     let sentCount = 0;
+    let addedAny = false;
     state.room.participants.forEach((participant) => {
       if (participant.id === myId) return;
       if (sentCount >= MAX_REMOTE_VIEWERS) return;
@@ -1473,8 +1602,10 @@
 
       if (!state.tx.outboundCalls.has(participant.id)) {
         callParticipantWithLocalStream(participant);
+        addedAny = true;
       }
     });
+    return addedAny;
   }
 
   function callParticipantWithLocalStream(participant) {
@@ -1501,6 +1632,10 @@
         roomId: state.roomId,
         senderName: state.localName,
         streamConfig: getCurrentStreamConfig()
+      },
+      sdpTransform: (sdp) => {
+        const targetKbps = Math.round(getEffectivePerViewerBitrateMbps() * 1000);
+        return boostVideoSdpBitrate(sdp, targetKbps);
       }
     });
 
@@ -1514,7 +1649,11 @@
     call.on('close', () => {
       if (state.tx.outboundCalls.get(participant.id) === record) {
         state.tx.outboundCalls.delete(participant.id);
-        updateTxBandwidthSummary();
+        if (state.tx.stream && state.tx.bandwidthMode === 'auto') {
+          applyBitrateToAllOutbound({ silent: true });
+        } else {
+          updateBitrateSliderUI();
+        }
       }
     });
 
@@ -2139,6 +2278,25 @@
 
     await Promise.all([...txJobs, ...rxJobs]);
 
+    // Remove membros silenciosamente desconectados (ex.: queda de rede ou aba morta sem beforeunload)
+    if (state.isOwner) {
+      const now = Date.now();
+      const staleIds = [];
+      state.room.memberConns.forEach((conn, memberId) => {
+        const lastSeen = conn._lastSeenAt || now;
+        const iceState = conn.peerConnection ? conn.peerConnection.iceConnectionState : '';
+        if (
+          !conn.open ||
+          iceState === 'failed' ||
+          iceState === 'closed' ||
+          now - lastSeen > 10000
+        ) {
+          staleIds.push(memberId);
+        }
+      });
+      staleIds.forEach((id) => removeMemberByOwner(id, true));
+    }
+
     if (state.tx.stream && state.tx.qualityLimitationReason !== worstLimitReason) {
       state.tx.qualityLimitationReason = worstLimitReason;
       notifyLocalStreamState();
@@ -2198,17 +2356,18 @@
       const h = settings.height || RESOLUTIONS[state.tx.resolution].height;
       const fps = settings.frameRate ? Math.round(settings.frameRate) : state.tx.fps;
 
+      const capMbps = getEffectivePerViewerBitrateMbps();
       el.statSender.textContent = `${state.localName} (Você)`;
       el.statCapture.textContent = `${w} × ${h}`;
       el.statRes.textContent = `${w} × ${h}`;
       el.statFps.textContent = `${fps} FPS`;
-      el.statBitrate.textContent = `${el.txRealUpload.textContent} (cap ${state.tx.bitrateMbps.toFixed(1)})`;
+      el.statBitrate.textContent = `${el.txRealUpload.textContent} (cap ${capMbps.toFixed(1)})`;
       const rtt = getBestRoomRtt();
       el.statRtt.textContent = rtt !== null ? `${rtt} ms` : '--';
       el.statLoss.textContent = '0.00%';
       el.statLimit.textContent = formatLimitationReason(state.tx.qualityLimitationReason);
 
-      el.playerStreamMeta.textContent = `${h}p • ${fps} fps • cap ${state.tx.bitrateMbps.toFixed(1)} Mbps`;
+      el.playerStreamMeta.textContent = `${h}p • ${fps} fps • cap ${capMbps.toFixed(1)} Mbps`;
       el.playerStreamMeta.classList.remove('hidden');
       return;
     }
@@ -2327,7 +2486,27 @@
   }
 
   function updateBitrateSliderUI() {
-    const val = state.tx.bitrateMbps;
+    const isAuto = state.tx.bandwidthMode === 'auto';
+
+    if (isAuto) {
+      el.sliderBitrate.min = '3';
+      el.sliderBitrate.max = '30';
+      el.sliderBitrate.step = '0.5';
+      el.labelBitrateSlider.textContent = 'Upload Máximo Total';
+      el.labelBwModeDetail.textContent = `${state.tx.totalBudgetMbps.toFixed(0)} Mbps p/ 1 • divide se entrar mais`;
+      el.sliderBitrateTicks.innerHTML =
+        '<span>3 Mbps</span><span>15 Mbps</span><span>22 Mbps</span><span>30 Mbps</span>';
+    } else {
+      el.sliderBitrate.min = '1';
+      el.sliderBitrate.max = '15';
+      el.sliderBitrate.step = '0.5';
+      el.labelBitrateSlider.textContent = 'Bitrate Máx. / Espectador';
+      el.labelBwModeDetail.textContent = 'Mesmo teto fixo por pessoa';
+      el.sliderBitrateTicks.innerHTML =
+        '<span>1 Mbps</span><span>5 Mbps</span><span>10 Mbps</span><span>15 Mbps</span>';
+    }
+
+    const val = isAuto ? state.tx.totalBudgetMbps : state.tx.bitrateMbps;
     const min = Number(el.sliderBitrate.min);
     const max = Number(el.sliderBitrate.max);
     const pct = ((val - min) / (max - min)) * 100;
@@ -2335,13 +2514,32 @@
     el.sliderBitrate.value = String(val);
     el.sliderBitrate.style.setProperty('--slider-pct', `${pct.toFixed(1)}%`);
     el.bitrateValueBadge.textContent = `${val.toFixed(1)} Mbps`;
-    el.bitrateMax6Estimate.textContent = `${(val * MAX_REMOTE_VIEWERS).toFixed(1)} Mbps upload`;
-    updateTxBandwidthSummary();
+
+    const perViewer = getEffectivePerViewerBitrateMbps();
+    const activeViewers = getActiveOutboundViewerCount();
+    const myId = state.peer ? state.peer.id : null;
+    const remoteCount = state.room.participants.filter((p) => p.id !== myId).length;
+
+    if (isAuto) {
+      if (remoteCount > 0) {
+        el.bitrateEstimateLabel.textContent = `Para ${remoteCount} espectador${remoteCount > 1 ? 'es' : ''}:`;
+        el.bitrateMax6Estimate.textContent = `${perViewer.toFixed(1)} Mbps / pessoa`;
+      } else {
+        const for6 = Math.max(0.5, state.tx.totalBudgetMbps / MAX_REMOTE_VIEWERS);
+        el.bitrateEstimateLabel.textContent = 'Por espectador:';
+        el.bitrateMax6Estimate.textContent = `${state.tx.totalBudgetMbps.toFixed(1)} Mbps (1) • ${for6.toFixed(1)} Mbps (6)`;
+      }
+    } else {
+      el.bitrateEstimateLabel.textContent = 'Estimativa p/ 6 espectadores:';
+      el.bitrateMax6Estimate.textContent = `${(val * MAX_REMOTE_VIEWERS).toFixed(1)} Mbps upload`;
+    }
+
+    updateTxBandwidthSummary(activeViewers);
   }
 
   function updateTxBandwidthSummary() {
     const activeViewers = state.tx.stream ? state.tx.outboundCalls.size : 0;
-    const cap = activeViewers * state.tx.bitrateMbps;
+    const cap = activeViewers * getEffectivePerViewerBitrateMbps();
     el.txCapUpload.textContent = `${cap.toFixed(1)} Mbps`;
   }
 
@@ -2635,6 +2833,9 @@
         });
         state.room.memberConns.clear();
       } else if (state.room.ownerConn) {
+        if (state.room.ownerConn.open) {
+          try { state.room.ownerConn.send({ type: 'leave' }); } catch (_) {}
+        }
         try { state.room.ownerConn.close(); } catch (_) {}
         state.room.ownerConn = null;
       }
@@ -3171,9 +3372,41 @@
       });
     });
 
-    // Slider de Bitrate Máximo por espectador (1 a 6 Mbps, padrão 2.5 Mbps)
+    // Seletor de Modo de Banda (Auto = Teto Total | Fixo = Por Pessoa)
+    el.bwModeButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.bwMode;
+        if ((mode !== 'auto' && mode !== 'fixed') || state.tx.bandwidthMode === mode) return;
+        state.tx.bandwidthMode = mode;
+
+        el.bwModeButtons.forEach((b) => {
+          const active = b.dataset.bwMode === mode;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-checked', String(active));
+        });
+
+        updateBitrateSliderUI();
+        applyBitrateToAllOutbound();
+
+        const eff = getEffectivePerViewerBitrateMbps();
+        showToast(
+          mode === 'auto'
+            ? `Modo Auto: até ${state.tx.totalBudgetMbps.toFixed(1)} Mbps divididos (${eff.toFixed(1)} Mbps/espectador).`
+            : `Modo Fixo: ${state.tx.bitrateMbps.toFixed(1)} Mbps por espectador.`,
+          'info',
+          2600
+        );
+      });
+    });
+
+    // Slider de Bitrate (Total no modo Auto 3–30 Mbps, ou Fixo por pessoa 1–15 Mbps)
     el.sliderBitrate.addEventListener('input', () => {
-      state.tx.bitrateMbps = Number(el.sliderBitrate.value);
+      const val = Number(el.sliderBitrate.value);
+      if (state.tx.bandwidthMode === 'auto') {
+        state.tx.totalBudgetMbps = val;
+      } else {
+        state.tx.bitrateMbps = val;
+      }
       updateBitrateSliderUI();
 
       if (state.tx.bitrateDebounce) clearTimeout(state.tx.bitrateDebounce);
@@ -3184,8 +3417,9 @@
 
     el.sliderBitrate.addEventListener('change', () => {
       if (state.tx.stream && state.tx.outboundCalls.size > 0) {
+        const eff = getEffectivePerViewerBitrateMbps();
         showToast(
-          `Bitrate máximo aplicado: ${state.tx.bitrateMbps.toFixed(1)} Mbps por espectador.`,
+          `Bitrate máximo aplicado: ${eff.toFixed(1)} Mbps por espectador.`,
           'success',
           2200
         );
@@ -3254,14 +3488,21 @@
       }
     });
 
-    window.addEventListener('beforeunload', () => {
-      if (state.mode === 'room' && state.isOwner) {
-        broadcastFromOwner({ type: 'room-closed' });
+    const handleTabExit = () => {
+      if (state.mode === 'room') {
+        if (state.isOwner) {
+          broadcastFromOwner({ type: 'room-closed' });
+        } else if (state.room.ownerConn && state.room.ownerConn.open) {
+          try { state.room.ownerConn.send({ type: 'leave' }); } catch (_) {}
+          try { state.room.ownerConn.close(); } catch (_) {}
+        }
       }
       if (state.peer && !state.peer.destroyed) {
         try { state.peer.destroy(); } catch (_) {}
       }
-    });
+    };
+    window.addEventListener('beforeunload', handleTabExit);
+    window.addEventListener('pagehide', handleTabExit);
   }
 
   /* ------------------------------------------------------------------------

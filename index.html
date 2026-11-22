@@ -569,33 +569,49 @@
             </div>
           </div>
 
-          <!-- Slider Bitrate Máximo por Espectador -->
+          <!-- Controle de Banda (Auto-Dividir vs Fixo por Espectador) -->
           <div class="control-block">
             <div class="control-label-row">
-              <label for="slider-bitrate">Bitrate Máx. / Espectador</label>
-              <span id="bitrate-value-badge" class="value-badge mono">2.5 Mbps</span>
+              <label>Modo de Banda</label>
+              <span id="label-bw-mode-detail" class="hint">15 Mbps p/ 1 • divide se entrar mais</span>
+            </div>
+            <div class="segmented-control" role="radiogroup" aria-label="Modo de controle de banda">
+              <button type="button" class="seg-btn active" data-bw-mode="auto" aria-checked="true" role="radio">
+                Auto <span class="seg-sub">Teto Total</span>
+              </button>
+              <button type="button" class="seg-btn" data-bw-mode="fixed" aria-checked="false" role="radio">
+                Fixo <span class="seg-sub">Por Pessoa</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Slider Bitrate (Total no modo Auto ou Por Espectador no modo Fixo) -->
+          <div class="control-block">
+            <div class="control-label-row">
+              <label id="label-bitrate-slider" for="slider-bitrate">Upload Máximo Total</label>
+              <span id="bitrate-value-badge" class="value-badge mono">15.0 Mbps</span>
             </div>
 
             <input
               type="range"
               id="slider-bitrate"
               class="range-slider"
-              min="1"
-              max="6"
-              step="0.1"
-              value="2.5"
+              min="3"
+              max="30"
+              step="0.5"
+              value="15"
             />
 
-            <div class="slider-ticks mono">
-              <span>1 Mbps</span>
-              <span>2.5 Mbps</span>
-              <span>4 Mbps</span>
-              <span>6 Mbps</span>
+            <div id="slider-bitrate-ticks" class="slider-ticks mono">
+              <span>3 Mbps</span>
+              <span>15 Mbps</span>
+              <span>22 Mbps</span>
+              <span>30 Mbps</span>
             </div>
 
             <div class="bandwidth-estimator">
-              <span>Estimativa p/ 6 espectadores:</span>
-              <strong id="bitrate-max-6-estimate" class="mono">15.0 Mbps upload</strong>
+              <span id="bitrate-estimate-label">Por espectador agora:</span>
+              <strong id="bitrate-max-6-estimate" class="mono">15.0 Mbps (1) • 2.5 Mbps (6)</strong>
             </div>
           </div>
 
