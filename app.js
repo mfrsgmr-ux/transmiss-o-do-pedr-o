@@ -90,9 +90,16 @@
 
     // Recepção de Telas Remotas (qualquer participante pode assistir)
     rx: {
-      // Map<peerId, { peerId, name, call, stream, streamConfig, inboundMbps, rttMs, fps, width, height, lossPct, muted, prevBytesRecv, prevStatsTs }>
+      // Map<`${peerId}:${kind}`, { streamKey, peerId, kind, name, call, stream, streamConfig, inboundMbps, rttMs, fps, width, height, lossPct, muted, prevBytesRecv, prevStatsTs }>
       streams: new Map(),
       pendingRequests: new Set()
+    },
+
+    // Câmera Local (independente do compartilhamento de tela)
+    cam: {
+      stream: null,
+      // Map<peerId, { peerId, name, call, outboundMbps, rttMs, prevBytesSent, prevStatsTs, bitrateQueue }>
+      outboundCalls: new Map()
     },
 
     // Estado do Player Cinema / Grade
@@ -178,6 +185,7 @@
     stageOverlayTitle: $('stage-overlay-title'),
     stageOverlayDesc: $('stage-overlay-desc'),
     btnStageShare: $('btn-stage-share'),
+    btnStageCam: $('btn-stage-cam'),
     btnStageRetry: $('btn-stage-retry'),
     btnStageBack: $('btn-stage-back'),
     btnUnmuteBanner: $('btn-unmute-banner'),
@@ -208,7 +216,10 @@
     iconFsEnter: $('icon-fs-enter'),
     iconFsExit: $('icon-fs-exit'),
 
-    // Stream Switcher & Direct Link
+    // Stream Switcher, Cam Strip & Direct Link
+    camStrip: $('cam-strip'),
+    camStripCount: $('cam-strip-count'),
+    camStripGrid: $('cam-strip-grid'),
     streamSwitcher: $('stream-switcher'),
     streamSwitcherList: $('stream-switcher-list'),
     roomDirectLinkText: $('room-direct-link-text'),
@@ -218,6 +229,8 @@
     broadcastStatusBadge: $('broadcast-status-badge'),
     btnToggleShare: $('btn-toggle-share'),
     btnToggleShareLabel: $('btn-toggle-share-label'),
+    btnToggleCam: $('btn-toggle-cam'),
+    btnToggleCamLabel: $('btn-toggle-cam-label'),
     broadcastSubactions: $('broadcast-subactions'),
     btnSwitchSource: $('btn-switch-source'),
     btnTogglePreview: $('btn-toggle-preview'),
@@ -612,13 +625,18 @@
     }
   }
 
-  function bindBitrateEnforcement(call, outboundRecord) {
+  function getCameraBitrateCapMbps() {
+    return Math.min(2.5, getEffectivePerViewerBitrateMbps());
+  }
+
+  function bindBitrateEnforcement(call, outboundRecord, kind = 'screen') {
     const pc = call.peerConnection;
     if (!pc) return;
 
     const enforceNow = () => {
       if (state.mode !== 'room' || outboundRecord.call !== call) return;
-      enqueueBitrateLimit(outboundRecord, getEffectivePerViewerBitrateMbps());
+      const capMbps = kind === 'camera' ? getCameraBitrateCapMbps() : getEffectivePerViewerBitrateMbps();
+      enqueueBitrateLimit(outboundRecord, capMbps);
     };
 
     // 1. Aplica imediatamente após peer.call()
@@ -643,10 +661,16 @@
 
   function applyBitrateToAllOutbound({ silent = false } = {}) {
     const perViewerMbps = getEffectivePerViewerBitrateMbps();
+    const camMbps = getCameraBitrateCapMbps();
     const tasks = [];
     state.tx.outboundCalls.forEach((record) => {
       if (record.call && record.call.peerConnection) {
         tasks.push(enqueueBitrateLimit(record, perViewerMbps));
+      }
+    });
+    state.cam.outboundCalls.forEach((record) => {
+      if (record.call && record.call.peerConnection) {
+        tasks.push(enqueueBitrateLimit(record, camMbps));
       }
     });
     updateBitrateSliderUI();
@@ -711,7 +735,8 @@
           role: 'owner',
           joinedAt: Date.now(),
           isStreaming: false,
-          streamConfig: null
+          streamConfig: null,
+          isCamOn: false
         }
       ];
 
@@ -939,7 +964,8 @@
         type: 'join',
         name: state.localName,
         isStreaming: Boolean(state.tx.stream),
-        streamConfig: state.tx.stream ? getCurrentStreamConfig() : null
+        streamConfig: state.tx.stream ? getCurrentStreamConfig() : null,
+        isCamOn: Boolean(state.cam.stream)
       });
       startMemberPingLoop();
       startRoomStatsLoop();
@@ -984,7 +1010,9 @@
 
       // Sonda rápida da aba "Salas Abertas": responde resumo sem entrar na sala
       if (isProbe) {
-        const streamingCount = state.room.participants.filter((p) => p.isStreaming).length;
+        const streamingCount = state.room.participants.filter(
+          (p) => p.isStreaming || p.isCamOn
+        ).length;
         try {
           conn.send({
             type: 'probe-info',
@@ -1037,7 +1065,8 @@
           role: 'member',
           joinedAt: Date.now(),
           isStreaming: false,
-          streamConfig: null
+          streamConfig: null,
+          isCamOn: false
         });
       }
 
@@ -1069,32 +1098,40 @@
           }
           participant.isStreaming = Boolean(msg.isStreaming);
           participant.streamConfig = msg.streamConfig || null;
+          participant.isCamOn = Boolean(msg.isCamOn);
           broadcastParticipantsFromOwner();
           break;
         }
         case 'stream-state': {
           const wasStreaming = participant.isStreaming;
+          const wasCamOn = participant.isCamOn;
           participant.isStreaming = Boolean(msg.isStreaming);
           participant.streamConfig = msg.streamConfig || null;
+          participant.isCamOn = Boolean(msg.isCamOn);
           broadcastParticipantsFromOwner();
 
           if (!wasStreaming && participant.isStreaming) {
             showToast(`${participant.name} começou a transmitir a tela!`, 'info');
+          } else if (!wasCamOn && participant.isCamOn) {
+            showToast(`${participant.name} ligou a câmera.`, 'info', 2500);
           }
           break;
         }
         case 'relay-request-stream': {
           const targetId = msg.targetId;
+          const kind = msg.kind === 'camera' ? 'camera' : 'screen';
           if (!targetId) break;
           if (targetId === state.peer.id) {
-            if (state.tx.stream) {
+            if (kind === 'camera') {
+              if (state.cam.stream) callParticipantWithLocalCam(participant);
+            } else if (state.tx.stream) {
               callParticipantWithLocalStream(participant);
             }
           } else {
             const targetConn = state.room.memberConns.get(targetId);
             if (targetConn && targetConn.open) {
               try {
-                targetConn.send({ type: 'request-stream', requesterId: memberId });
+                targetConn.send({ type: 'request-stream', requesterId: memberId, kind });
               } catch (_) {}
             }
           }
@@ -1204,13 +1241,19 @@
         const prevStreaming = new Set(
           state.room.participants.filter((p) => p.isStreaming).map((p) => p.id)
         );
+        const prevCamOn = new Set(
+          state.room.participants.filter((p) => p.isCamOn).map((p) => p.id)
+        );
         state.room.participants = Array.isArray(msg.participants) ? msg.participants : [];
 
-        // Toast amigável quando alguém começa a transmitir
+        // Toast amigável quando alguém começa a transmitir ou liga a câmera
         const myId = state.peer ? state.peer.id : null;
         state.room.participants.forEach((p) => {
-          if (p.id !== myId && p.isStreaming && !prevStreaming.has(p.id)) {
+          if (p.id === myId) return;
+          if (p.isStreaming && !prevStreaming.has(p.id)) {
             showToast(`${p.name} começou a transmitir a tela!`, 'info');
+          } else if (p.isCamOn && !prevCamOn.has(p.id)) {
+            showToast(`${p.name} ligou a câmera.`, 'info', 2500);
           }
         });
 
@@ -1219,10 +1262,14 @@
       }
 
       case 'request-stream': {
-        if (state.tx.stream && msg.requesterId) {
+        if (msg.requesterId) {
           const target = state.room.participants.find((p) => p.id === msg.requesterId);
           if (target) {
-            callParticipantWithLocalStream(target);
+            if (msg.kind === 'camera') {
+              if (state.cam.stream) callParticipantWithLocalCam(target);
+            } else if (state.tx.stream) {
+              callParticipantWithLocalStream(target);
+            }
           }
         }
         break;
@@ -1277,12 +1324,14 @@
     if (state.mode !== 'room' || !state.peer) return;
     const isStreaming = Boolean(state.tx.stream);
     const streamConfig = isStreaming ? getCurrentStreamConfig() : null;
+    const isCamOn = Boolean(state.cam.stream);
 
     if (state.isOwner) {
       const self = state.room.participants.find((p) => p.id === state.peer.id);
       if (self) {
         self.isStreaming = isStreaming;
         self.streamConfig = streamConfig;
+        self.isCamOn = isCamOn;
       }
       broadcastParticipantsFromOwner();
     } else if (state.room.ownerConn && state.room.ownerConn.open) {
@@ -1290,7 +1339,8 @@
         state.room.ownerConn.send({
           type: 'stream-state',
           isStreaming,
-          streamConfig
+          streamConfig,
+          isCamOn
         });
       } catch (_) {}
     }
@@ -1305,7 +1355,7 @@
     const activeIds = new Set(state.room.participants.map((p) => p.id));
     const myId = state.peer ? state.peer.id : null;
 
-    // 1. Limpa chamadas de saída de quem saiu da sala
+    // 1. Limpa chamadas de saída (tela + câmera) de quem saiu da sala
     let outboundCountChanged = false;
     state.tx.outboundCalls.forEach((record, peerId) => {
       if (!activeIds.has(peerId)) {
@@ -1320,36 +1370,58 @@
       }
     });
 
-    // 2. Se estou transmitindo, chama qualquer participante novo na sala
+    state.cam.outboundCalls.forEach((record, peerId) => {
+      if (!activeIds.has(peerId)) {
+        if (record.call) {
+          try { record.call.close(); } catch (_) {}
+        }
+        state.cam.outboundCalls.delete(peerId);
+      } else {
+        const p = state.room.participants.find((x) => x.id === peerId);
+        if (p) record.name = p.name;
+      }
+    });
+
+    // 2. Se estou transmitindo tela ou câmera, chama participantes novos
     if (state.tx.stream) {
       if (syncOutboundCallsWithRoster() || (outboundCountChanged && state.tx.bandwidthMode === 'auto')) {
         applyBitrateToAllOutbound({ silent: true });
       }
     }
+    if (state.cam.stream) {
+      syncOutboundCamCallsWithRoster();
+    }
 
-    // 3. Limpa streams recebidos de quem saiu ou parou de transmitir
+    // 3. Limpa streams recebidos de quem saiu ou parou de transmitir/câmera
     let rxChanged = false;
-    state.rx.streams.forEach((entry, peerId) => {
-      const p = state.room.participants.find((x) => x.id === peerId);
-      if (!p || !p.isStreaming) {
+    state.rx.streams.forEach((entry, streamKey) => {
+      const p = state.room.participants.find((x) => x.id === entry.peerId);
+      const stillActive = p && (entry.kind === 'camera' ? p.isCamOn : p.isStreaming);
+      if (!stillActive) {
         if (entry.call) {
           try { entry.call.close(); } catch (_) {}
         }
-        state.rx.streams.delete(peerId);
-        if (state.player.focusKey === peerId) {
+        state.rx.streams.delete(streamKey);
+        if (state.player.focusKey === streamKey) {
           state.player.focusKey = null;
         }
         rxChanged = true;
       } else {
         entry.name = p.name;
-        entry.streamConfig = p.streamConfig || entry.streamConfig;
+        if (entry.kind === 'screen') {
+          entry.streamConfig = p.streamConfig || entry.streamConfig;
+        }
       }
     });
 
-    // 4. Se alguém está transmitindo e ainda não recebemos a chamada, agenda pedido de fallback
+    // 4. Fallback caso algum fluxo (tela ou câmera) esteja ativo e ainda não tenha chegado
     state.room.participants.forEach((p) => {
-      if (p.id !== myId && p.isStreaming && !state.rx.streams.has(p.id)) {
-        scheduleStreamRequest(p.id);
+      if (p.id === myId) return;
+      if (p.isStreaming && !state.rx.streams.has(`${p.id}:screen`)) {
+        scheduleStreamRequest(p.id, 'screen');
+      }
+      if (p.isCamOn && !state.rx.streams.has(`${p.id}:camera`)) {
+        scheduleStreamRequest(p.id, 'camera');
       }
     });
 
@@ -1359,35 +1431,37 @@
 
     updateRoomCountersAndBadges();
     updateBitrateSliderUI();
+    renderCamStrip();
     renderStreamSwitcher();
     renderParticipantsList();
     syncPlayerStage();
   }
 
-  function scheduleStreamRequest(targetId) {
-    if (state.rx.pendingRequests.has(targetId)) return;
-    state.rx.pendingRequests.add(targetId);
+  function scheduleStreamRequest(targetId, kind = 'screen') {
+    const reqKey = `${targetId}:${kind}`;
+    if (state.rx.pendingRequests.has(reqKey)) return;
+    state.rx.pendingRequests.add(reqKey);
 
     const mySession = state.sessionSeq;
     window.setTimeout(() => {
-      state.rx.pendingRequests.delete(targetId);
+      state.rx.pendingRequests.delete(reqKey);
       if (state.sessionSeq !== mySession || state.mode !== 'room') return;
 
-      const stillStreaming = state.room.participants.some(
-        (p) => p.id === targetId && p.isStreaming
+      const stillActive = state.room.participants.some(
+        (p) => p.id === targetId && (kind === 'camera' ? p.isCamOn : p.isStreaming)
       );
-      if (!stillStreaming || state.rx.streams.has(targetId)) return;
+      if (!stillActive || state.rx.streams.has(reqKey)) return;
 
       if (state.isOwner) {
         const conn = state.room.memberConns.get(targetId);
         if (conn && conn.open) {
           try {
-            conn.send({ type: 'request-stream', requesterId: state.peer.id });
+            conn.send({ type: 'request-stream', requesterId: state.peer.id, kind });
           } catch (_) {}
         }
       } else if (state.room.ownerConn && state.room.ownerConn.open) {
         try {
-          state.room.ownerConn.send({ type: 'relay-request-stream', targetId });
+          state.room.ownerConn.send({ type: 'relay-request-stream', targetId, kind });
         } catch (_) {}
       }
     }, 2500);
@@ -1563,14 +1637,15 @@
       oldStream.getTracks().forEach((track) => track.stop());
     }
 
-    // Se ainda não há stream remoto focado, mostra o preview local no palco
-    if (!state.player.focusKey || state.player.focusKey === 'local') {
-      state.player.focusKey = 'local';
+    // Se ainda não há stream remoto focado, mostra o preview local da tela no palco
+    if (!state.player.focusKey || state.player.focusKey.startsWith('local:')) {
+      state.player.focusKey = 'local:screen';
     }
 
     notifyLocalStreamState();
     updateTxControlsUI();
     updateTxBandwidthSummary();
+    renderCamStrip();
     renderStreamSwitcher();
     renderParticipantsList();
     syncPlayerStage();
@@ -1629,6 +1704,7 @@
 
     const call = state.peer.call(participant.id, state.tx.stream, {
       metadata: {
+        kind: 'screen',
         roomId: state.roomId,
         senderName: state.localName,
         streamConfig: getCurrentStreamConfig()
@@ -1644,7 +1720,7 @@
     state.tx.outboundCalls.set(participant.id, record);
 
     // Controle de banda obrigatório logo após peer.call()
-    bindBitrateEnforcement(call, record);
+    bindBitrateEnforcement(call, record, 'screen');
 
     call.on('close', () => {
       if (state.tx.outboundCalls.get(participant.id) === record) {
@@ -1686,7 +1762,7 @@
     });
     state.tx.outboundCalls.clear();
 
-    if (state.player.focusKey === 'local') {
+    if (state.player.focusKey === 'local:screen') {
       state.player.focusKey = null;
       ensureValidFocusKey();
     }
@@ -1694,6 +1770,7 @@
     notifyLocalStreamState();
     updateTxControlsUI();
     updateTxBandwidthSummary();
+    renderCamStrip();
     renderStreamSwitcher();
     renderParticipantsList();
     syncPlayerStage();
@@ -1743,27 +1820,230 @@
   }
 
   /* ------------------------------------------------------------------------
+     CÂMERA LOCAL (getUserMedia + peer.call + setParameters)
+  ------------------------------------------------------------------------ */
+  async function startCameraCapture() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast(
+        'Seu navegador não suporta captura de câmera (ou a página não está em HTTPS/localhost).',
+        'error',
+        5000
+      );
+      return;
+    }
+
+    const mySession = state.sessionSeq;
+    let camStream;
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 }
+        },
+        audio: false
+      });
+    } catch (err) {
+      if (err && (err.name === 'OverconstrainedError' || err.name === 'TypeError')) {
+        try {
+          camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        } catch (fallbackErr) {
+          err = fallbackErr;
+        }
+      }
+
+      if (!camStream) {
+        if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+          showToast('Permissão da câmera negada.', 'warning', 3200);
+        } else if (err && (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError')) {
+          showToast('Nenhuma câmera encontrada neste dispositivo.', 'warning', 3600);
+        } else {
+          console.error('[getUserMedia camera]', err);
+          showToast('Não foi possível ativar a câmera.', 'error', 4000);
+        }
+        return;
+      }
+    }
+
+    if (state.mode !== 'room' || state.sessionSeq !== mySession) {
+      camStream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+
+    const camTrack = camStream.getVideoTracks()[0];
+    if (!camTrack) {
+      camStream.getTracks().forEach((t) => t.stop());
+      showToast('Nenhum vídeo de câmera capturado.', 'error');
+      return;
+    }
+
+    if ('contentHint' in camTrack) {
+      camTrack.contentHint = 'motion';
+    }
+
+    camTrack.addEventListener('ended', () => {
+      if (state.cam.stream === camStream) {
+        stopCameraCapture(true);
+      }
+    });
+
+    if (state.cam.stream) {
+      state.cam.stream.getTracks().forEach((t) => t.stop());
+    }
+    state.cam.stream = camStream;
+
+    state.cam.outboundCalls.forEach((rec) => {
+      if (rec.call) {
+        try { rec.call.close(); } catch (_) {}
+      }
+    });
+    state.cam.outboundCalls.clear();
+    syncOutboundCamCallsWithRoster();
+
+    if (!state.player.focusKey) {
+      state.player.focusKey = 'local:camera';
+    }
+
+    notifyLocalStreamState();
+    updateTxControlsUI();
+    renderCamStrip();
+    renderStreamSwitcher();
+    renderParticipantsList();
+    syncPlayerStage();
+    showToast('Câmera ativada!', 'success', 2200);
+  }
+
+  function syncOutboundCamCallsWithRoster() {
+    if (!state.cam.stream || !state.peer) return;
+    const myId = state.peer.id;
+
+    let sentCount = 0;
+    state.room.participants.forEach((participant) => {
+      if (participant.id === myId) return;
+      if (sentCount >= MAX_REMOTE_VIEWERS) return;
+      sentCount += 1;
+
+      if (!state.cam.outboundCalls.has(participant.id)) {
+        callParticipantWithLocalCam(participant);
+      }
+    });
+  }
+
+  function callParticipantWithLocalCam(participant) {
+    if (!state.peer || !state.cam.stream || !participant || participant.id === state.peer.id) return;
+
+    const existing = state.cam.outboundCalls.get(participant.id);
+    if (existing && existing.call) {
+      try { existing.call.close(); } catch (_) {}
+    }
+
+    const record = {
+      peerId: participant.id,
+      name: participant.name,
+      call: null,
+      outboundMbps: 0,
+      rttMs: null,
+      prevBytesSent: 0,
+      prevStatsTs: 0,
+      bitrateQueue: Promise.resolve()
+    };
+
+    const call = state.peer.call(participant.id, state.cam.stream, {
+      metadata: {
+        kind: 'camera',
+        roomId: state.roomId,
+        senderName: state.localName,
+        streamConfig: { resolution: '720p', fps: 30 }
+      },
+      sdpTransform: (sdp) => {
+        const targetKbps = Math.round(getCameraBitrateCapMbps() * 1000);
+        return boostVideoSdpBitrate(sdp, targetKbps);
+      }
+    });
+
+    if (!call) return;
+    record.call = call;
+    state.cam.outboundCalls.set(participant.id, record);
+
+    // Controle de banda obrigatório também nas chamadas da câmera
+    bindBitrateEnforcement(call, record, 'camera');
+
+    call.on('close', () => {
+      if (state.cam.outboundCalls.get(participant.id) === record) {
+        state.cam.outboundCalls.delete(participant.id);
+      }
+    });
+
+    call.on('error', (err) => {
+      console.warn('[Outbound CamCall]', participant.id, err);
+    });
+  }
+
+  function stopCameraCapture(fromHardware = false) {
+    const camStream = state.cam.stream;
+    state.cam.stream = null;
+
+    if (camStream) {
+      camStream.getTracks().forEach((t) => t.stop());
+    }
+
+    state.cam.outboundCalls.forEach((rec) => {
+      if (rec.call) {
+        try { rec.call.close(); } catch (_) {}
+      }
+    });
+    state.cam.outboundCalls.clear();
+
+    if (state.player.focusKey === 'local:camera') {
+      state.player.focusKey = null;
+      ensureValidFocusKey();
+    }
+
+    notifyLocalStreamState();
+    updateTxControlsUI();
+    renderCamStrip();
+    renderStreamSwitcher();
+    renderParticipantsList();
+    syncPlayerStage();
+
+    if (!state.isCleaningUp) {
+      showToast(
+        fromHardware ? 'Câmera desconectada.' : 'Câmera desligada.',
+        'info',
+        2200
+      );
+    }
+  }
+
+  /* ------------------------------------------------------------------------
      RECEPÇÃO DE CHAMADAS DE VÍDEO DE OUTROS PARTICIPANTES
   ------------------------------------------------------------------------ */
   function handleIncomingMediaCall(call, mySession) {
     const senderId = call.peer;
+    const kind = (call.metadata && call.metadata.kind === 'camera') ? 'camera' : 'screen';
+    const streamKey = `${senderId}:${kind}`;
     const participant = state.room.participants.find((p) => p.id === senderId);
     const senderName =
       (participant && participant.name) ||
       (call.metadata && call.metadata.senderName) ||
       'Participante';
 
-    const prevEntry = state.rx.streams.get(senderId);
+    const prevEntry = state.rx.streams.get(streamKey);
     if (prevEntry && prevEntry.call && prevEntry.call !== call) {
       try { prevEntry.call.close(); } catch (_) {}
     }
 
     const entry = {
+      streamKey,
       peerId: senderId,
+      kind,
       name: senderName,
       call,
       stream: null,
-      streamConfig: (call.metadata && call.metadata.streamConfig) || (participant && participant.streamConfig) || null,
+      streamConfig:
+        (call.metadata && call.metadata.streamConfig) ||
+        (kind === 'screen' && participant && participant.streamConfig) ||
+        null,
       inboundMbps: null,
       rttMs: null,
       fps: null,
@@ -1775,7 +2055,7 @@
       prevStatsTs: 0
     };
 
-    state.rx.streams.set(senderId, entry);
+    state.rx.streams.set(streamKey, entry);
 
     // Responde em receive-only (se o usuário local quiser transmitir, ele faz seu próprio peer.call)
     call.answer();
@@ -1784,11 +2064,14 @@
       if (state.sessionSeq !== mySession || state.mode !== 'room') return;
       entry.stream = remoteStream;
 
-      // Auto-foca no stream remoto se o palco ainda não estiver focado em outro stream remoto
-      if (!state.player.focusKey || state.player.focusKey === 'local') {
-        state.player.focusKey = senderId;
+      // Auto-foca no palco: prioriza tela remota se não estiver vendo outra tela remota
+      const cur = state.player.focusKey;
+      const curIsRemoteScreen = cur && !cur.startsWith('local:') && cur.endsWith(':screen');
+      if (!cur || cur.startsWith('local:') || (kind === 'screen' && !curIsRemoteScreen)) {
+        state.player.focusKey = streamKey;
       }
 
+      renderCamStrip();
       renderStreamSwitcher();
       renderParticipantsList();
       syncPlayerStage();
@@ -1796,12 +2079,13 @@
 
     call.on('close', () => {
       if (state.sessionSeq !== mySession) return;
-      if (state.rx.streams.get(senderId) === entry) {
-        state.rx.streams.delete(senderId);
-        if (state.player.focusKey === senderId) {
+      if (state.rx.streams.get(streamKey) === entry) {
+        state.rx.streams.delete(streamKey);
+        if (state.player.focusKey === streamKey) {
           state.player.focusKey = null;
           ensureValidFocusKey();
         }
+        renderCamStrip();
         renderStreamSwitcher();
         renderParticipantsList();
         syncPlayerStage();
@@ -1809,20 +2093,22 @@
     });
 
     call.on('error', (err) => {
-      console.warn('[Inbound MediaCall]', senderId, err);
+      console.warn('[Inbound MediaCall]', streamKey, err);
     });
   }
 
   /* ------------------------------------------------------------------------
-     GERENCIAMENTO DO PALCO (MODO FOCO CINEMA + GRADE MULTI-TELA)
+     GERENCIAMENTO DO PALCO (MODO FOCO CINEMA + GRADE + TIRA DE CÂMERAS)
   ------------------------------------------------------------------------ */
   function getActiveStreamsList() {
     const items = [];
 
+    // 1. Telas remotas primeiro
     state.rx.streams.forEach((entry) => {
-      if (entry.stream) {
+      if (entry.stream && entry.kind === 'screen') {
         items.push({
-          key: entry.peerId,
+          key: entry.streamKey,
+          kind: 'screen',
           isLocal: false,
           name: entry.name,
           stream: entry.stream,
@@ -1831,12 +2117,40 @@
       }
     });
 
+    // 2. Tela local (preview)
     if (state.tx.stream) {
       items.push({
-        key: 'local',
+        key: 'local:screen',
+        kind: 'screen',
         isLocal: true,
         name: `${state.localName} (Sua tela)`,
         stream: state.tx.stream,
+        entry: null
+      });
+    }
+
+    // 3. Câmeras remotas
+    state.rx.streams.forEach((entry) => {
+      if (entry.stream && entry.kind === 'camera') {
+        items.push({
+          key: entry.streamKey,
+          kind: 'camera',
+          isLocal: false,
+          name: `${entry.name} (Câmera)`,
+          stream: entry.stream,
+          entry
+        });
+      }
+    });
+
+    // 4. Câmera local
+    if (state.cam.stream) {
+      items.push({
+        key: 'local:camera',
+        kind: 'camera',
+        isLocal: true,
+        name: `${state.localName} (Sua câmera)`,
+        stream: state.cam.stream,
         entry: null
       });
     }
@@ -1853,19 +2167,23 @@
 
     const exists = active.some((item) => item.key === state.player.focusKey);
     if (!exists) {
-      // Prefere focar um stream remoto antes do preview local
-      const firstRemote = active.find((item) => !item.isLocal);
-      state.player.focusKey = firstRemote ? firstRemote.key : active[0].key;
+      // Prefere focar tela remota > tela local > câmera remota > câmera local
+      const firstRemoteScreen = active.find((item) => !item.isLocal && item.kind === 'screen');
+      const localScreen = active.find((item) => item.isLocal && item.kind === 'screen');
+      const firstRemoteCam = active.find((item) => !item.isLocal && item.kind === 'camera');
+      const picked = firstRemoteScreen || localScreen || firstRemoteCam || active[0];
+      state.player.focusKey = picked.key;
     }
   }
 
   function selectFocusStream(key) {
     state.player.focusKey = key;
-    if (key === 'local' && state.tx.previewHidden) {
+    if (key === 'local:screen' && state.tx.previewHidden) {
       state.tx.previewHidden = false;
       updateTxControlsUI();
     }
     state.player.gridMode = false;
+    renderCamStrip();
     renderStreamSwitcher();
     renderParticipantsList();
     syncPlayerStage();
@@ -1887,13 +2205,14 @@
     // Caso 1: Grade multi-tela
     if (showGrid) {
       el.mainVideo.classList.add('hidden');
+      el.mainVideo.classList.remove('mirrored');
       el.mainVideo.srcObject = null;
       el.multiGrid.classList.remove('hidden');
       el.playerControls.classList.remove('hidden');
       el.volumeControlWrap.classList.add('hidden');
       el.btnPip.classList.add('hidden');
       el.btnUnmuteBanner.classList.add('hidden');
-      el.playerLiveLabel.textContent = `${active.length} TELAS AO VIVO`;
+      el.playerLiveLabel.textContent = `${active.length} VÍDEOS AO VIVO`;
       el.playerStreamMeta.classList.add('hidden');
       setStageOverlay({ visible: false });
       renderMultiGrid(active);
@@ -1905,9 +2224,10 @@
 
     const focused = active.find((item) => item.key === state.player.focusKey) || null;
 
-    // Caso 2: Nenhuma tela ativa no palco
+    // Caso 2: Nenhuma tela ou câmera ativa no palco
     if (!focused) {
       el.mainVideo.classList.add('hidden');
+      el.mainVideo.classList.remove('mirrored');
       el.mainVideo.srcObject = null;
       el.playerControls.classList.add('hidden');
       el.btnUnmuteBanner.classList.add('hidden');
@@ -1916,7 +2236,7 @@
 
       if (state.mode === 'room' && (state.isOwner || (state.room.ownerConn && state.room.ownerConn.open))) {
         const someoneElseLoading = state.room.participants.some(
-          (p) => state.peer && p.id !== state.peer.id && p.isStreaming
+          (p) => state.peer && p.id !== state.peer.id && (p.isStreaming || p.isCamOn)
         );
         if (someoneElseLoading) {
           setStageOverlay({
@@ -1926,6 +2246,7 @@
             showSpinner: true,
             showIdleIcon: false,
             showShareBtn: false,
+            showCamBtn: false,
             showRetryBtn: false,
             showBackBtn: false
           });
@@ -1933,10 +2254,11 @@
           setStageOverlay({
             visible: true,
             title: 'Ninguém transmitindo ainda',
-            desc: 'Qualquer pessoa na sala pode compartilhar a tela agora — ou aguarde alguém iniciar.',
+            desc: 'Qualquer pessoa na sala pode compartilhar a tela ou ligar a câmera agora.',
             showSpinner: false,
             showIdleIcon: true,
             showShareBtn: true,
+            showCamBtn: true,
             showRetryBtn: false,
             showBackBtn: false
           });
@@ -1945,9 +2267,10 @@
       return;
     }
 
-    // Caso 3: Preview local oculto pelo usuário para poupar GPU
-    if (focused.isLocal && state.tx.previewHidden) {
+    // Caso 3: Preview local da tela oculto pelo usuário para poupar GPU
+    if (focused.isLocal && focused.kind === 'screen' && state.tx.previewHidden) {
       el.mainVideo.classList.add('hidden');
+      el.mainVideo.classList.remove('mirrored');
       el.mainVideo.srcObject = null;
       el.playerControls.classList.add('hidden');
       el.btnUnmuteBanner.classList.add('hidden');
@@ -1958,6 +2281,7 @@
         showSpinner: false,
         showIdleIcon: true,
         showShareBtn: false,
+        showCamBtn: false,
         showRetryBtn: false,
         showBackBtn: false
       });
@@ -1967,6 +2291,7 @@
     // Caso 4: Exibição em Modo Cinema no vídeo principal
     setStageOverlay({ visible: false });
     el.mainVideo.classList.remove('hidden');
+    el.mainVideo.classList.toggle('mirrored', focused.isLocal && focused.kind === 'camera');
     el.playerControls.classList.remove('hidden');
     el.btnPip.classList.toggle('hidden', !document.pictureInPictureEnabled);
 
@@ -1979,7 +2304,14 @@
       el.mainVideo.muted = true;
       el.volumeControlWrap.classList.add('hidden');
       el.btnUnmuteBanner.classList.add('hidden');
-      el.playerLiveLabel.textContent = 'SEU PREVIEW';
+      el.playerLiveLabel.textContent = focused.kind === 'camera' ? 'SUA CÂMERA' : 'SEU PREVIEW';
+      el.mainVideo.play().catch(() => {});
+    } else if (focused.kind === 'camera') {
+      // Câmera remota é somente vídeo (sem áudio para não dar eco com Discord)
+      el.mainVideo.muted = true;
+      el.volumeControlWrap.classList.add('hidden');
+      el.btnUnmuteBanner.classList.add('hidden');
+      el.playerLiveLabel.textContent = `CÂMERA • ${focused.name.replace(' (Câmera)', '')}`;
       el.mainVideo.play().catch(() => {});
     } else {
       el.volumeControlWrap.classList.remove('hidden');
@@ -2015,9 +2347,12 @@
       const video = document.createElement('video');
       video.autoplay = true;
       video.playsInline = true;
+      if (item.isLocal && item.kind === 'camera') {
+        video.classList.add('mirrored');
+      }
       video.srcObject = item.stream;
 
-      if (item.isLocal) {
+      if (item.isLocal || item.kind === 'camera') {
         video.muted = true;
       } else {
         video.muted = Boolean(item.entry && item.entry.muted) || state.player.volume === 0;
@@ -2033,7 +2368,7 @@
       const actions = document.createElement('div');
       actions.className = 'grid-tile-actions';
 
-      if (!item.isLocal && item.entry) {
+      if (!item.isLocal && item.kind === 'screen' && item.entry) {
         const muteBtn = document.createElement('button');
         muteBtn.type = 'button';
         muteBtn.className = 'grid-tile-btn';
@@ -2068,6 +2403,52 @@
     });
   }
 
+  function renderCamStrip() {
+    const camItems = getActiveStreamsList().filter((item) => item.kind === 'camera');
+    el.camStrip.classList.toggle('hidden', camItems.length === 0);
+    el.camStripCount.textContent = String(camItems.length);
+    el.camStripGrid.replaceChildren();
+
+    if (camItems.length === 0) return;
+
+    camItems.forEach((item) => {
+      const tile = document.createElement('div');
+      const isFocused = !state.player.gridMode && state.player.focusKey === item.key;
+      tile.className = `cam-tile ${isFocused ? 'active' : ''}`;
+      tile.title = 'Clique para focar esta câmera em tela grande';
+
+      const video = document.createElement('video');
+      video.autoplay = true;
+      video.playsInline = true;
+      video.muted = true;
+      if (item.isLocal) {
+        video.classList.add('mirrored');
+      }
+      video.srcObject = item.stream;
+
+      const bar = document.createElement('div');
+      bar.className = 'cam-tile-bar';
+
+      const nameWrap = document.createElement('span');
+      nameWrap.className = 'cam-tile-name';
+      const dot = document.createElement('span');
+      dot.className = 'cam-tile-dot';
+      const label = document.createElement('span');
+      label.textContent = item.isLocal ? `${state.localName} (Você)` : item.name.replace(' (Câmera)', '');
+
+      nameWrap.appendChild(dot);
+      nameWrap.appendChild(label);
+      bar.appendChild(nameWrap);
+
+      tile.appendChild(video);
+      tile.appendChild(bar);
+      tile.addEventListener('click', () => selectFocusStream(item.key));
+
+      el.camStripGrid.appendChild(tile);
+      video.play().catch(() => {});
+    });
+  }
+
   function renderStreamSwitcher() {
     const active = getActiveStreamsList();
     el.streamSwitcher.classList.toggle('hidden', active.length === 0);
@@ -2089,13 +2470,22 @@
       dot.className = 'stream-chip-dot';
 
       const label = document.createElement('span');
-      label.textContent = item.isLocal ? 'Minha Tela (Preview)' : item.name;
+      if (item.key === 'local:screen') {
+        label.textContent = 'Minha Tela (Preview)';
+      } else if (item.key === 'local:camera') {
+        label.textContent = 'Minha Câmera';
+      } else {
+        label.textContent = item.name;
+      }
 
       btn.appendChild(dot);
       btn.appendChild(label);
 
-      const cfg = item.isLocal ? getCurrentStreamConfig() : item.entry && item.entry.streamConfig;
-      if (cfg) {
+      const cfg =
+        item.key === 'local:screen'
+          ? getCurrentStreamConfig()
+          : item.entry && item.entry.streamConfig;
+      if (cfg && item.kind === 'screen') {
         const meta = document.createElement('span');
         meta.className = 'stream-chip-meta mono';
         meta.textContent = `${cfg.resolution} ${cfg.fps}fps`;
@@ -2171,7 +2561,7 @@
     let worstLimitReason = 'none';
     const txJobs = [];
 
-    state.tx.outboundCalls.forEach((record) => {
+    const collectOutboundStat = (record, isScreen) => {
       const pc = record.call && record.call.peerConnection;
       if (!pc || pc.connectionState === 'closed') {
         record.outboundMbps = 0;
@@ -2210,14 +2600,17 @@
           record.prevBytesSent = bytesSent;
           record.prevStatsTs = ts;
           record.limitReason = limitReason;
-          if (limitReason !== 'none' && worstLimitReason === 'none') {
+          if (isScreen && limitReason !== 'none' && worstLimitReason === 'none') {
             worstLimitReason = limitReason;
           }
           if (rttMs !== null) record.rttMs = rttMs;
           totalOutboundMbps += record.outboundMbps;
         }).catch(() => {})
       );
-    });
+    };
+
+    state.tx.outboundCalls.forEach((record) => collectOutboundStat(record, true));
+    state.cam.outboundCalls.forEach((record) => collectOutboundStat(record, false));
 
     // 2. Estatísticas de recepção (de todas as telas recebidas)
     const rxJobs = [];
@@ -2312,14 +2705,17 @@
 
   function getBestRoomRtt() {
     // 1. Se assistindo um stream remoto, prioriza o RTT WebRTC direto até esse transmissor
-    if (state.player.focusKey && state.player.focusKey !== 'local') {
+    if (state.player.focusKey && !state.player.focusKey.startsWith('local:')) {
       const focused = state.rx.streams.get(state.player.focusKey);
       if (focused && typeof focused.rttMs === 'number') {
         return focused.rttMs;
       }
     }
-    // 2. Se transmitindo para alguém, usa média/primeiro RTT outbound
+    // 2. Se transmitindo para alguém, usa RTT outbound
     for (const rec of state.tx.outboundCalls.values()) {
+      if (typeof rec.rttMs === 'number') return rec.rttMs;
+    }
+    for (const rec of state.cam.outboundCalls.values()) {
       if (typeof rec.rttMs === 'number') return rec.rttMs;
     }
     // 3. Fallback: ping/pong até o coordenador da sala
@@ -2349,7 +2745,7 @@
       return;
     }
 
-    if (state.player.focusKey === 'local' && state.tx.stream) {
+    if (state.player.focusKey === 'local:screen' && state.tx.stream) {
       const vTrack = state.tx.stream.getVideoTracks()[0];
       const settings = vTrack && vTrack.getSettings ? vTrack.getSettings() : {};
       const w = settings.width || RESOLUTIONS[state.tx.resolution].width;
@@ -2368,6 +2764,29 @@
       el.statLimit.textContent = formatLimitationReason(state.tx.qualityLimitationReason);
 
       el.playerStreamMeta.textContent = `${h}p • ${fps} fps • cap ${capMbps.toFixed(1)} Mbps`;
+      el.playerStreamMeta.classList.remove('hidden');
+      return;
+    }
+
+    if (state.player.focusKey === 'local:camera' && state.cam.stream) {
+      const vTrack = state.cam.stream.getVideoTracks()[0];
+      const settings = vTrack && vTrack.getSettings ? vTrack.getSettings() : {};
+      const w = settings.width || 1280;
+      const h = settings.height || 720;
+      const fps = settings.frameRate ? Math.round(settings.frameRate) : 30;
+      const camCap = getCameraBitrateCapMbps();
+
+      el.statSender.textContent = `${state.localName} (Sua câmera)`;
+      el.statCapture.textContent = `${w} × ${h}`;
+      el.statRes.textContent = `${w} × ${h}`;
+      el.statFps.textContent = `${fps} FPS`;
+      el.statBitrate.textContent = `${el.txRealUpload.textContent} (cap ${camCap.toFixed(1)})`;
+      const rtt = getBestRoomRtt();
+      el.statRtt.textContent = rtt !== null ? `${rtt} ms` : '--';
+      el.statLoss.textContent = '0.00%';
+      el.statLimit.textContent = 'Nenhuma';
+
+      el.playerStreamMeta.textContent = `Câmera • ${h}p • ${fps} fps`;
       el.playerStreamMeta.classList.remove('hidden');
       return;
     }
@@ -2451,6 +2870,7 @@
     showSpinner = false,
     showIdleIcon = false,
     showShareBtn = false,
+    showCamBtn = false,
     showRetryBtn = false,
     showBackBtn = false
   }) {
@@ -2461,27 +2881,40 @@
     el.stageSpinner.classList.toggle('hidden', !showSpinner);
     el.stageIdleIcon.classList.toggle('hidden', !showIdleIcon);
     el.btnStageShare.classList.toggle('hidden', !showShareBtn);
+    el.btnStageCam.classList.toggle('hidden', !showCamBtn);
     el.btnStageRetry.classList.toggle('hidden', !showRetryBtn);
     el.btnStageBack.classList.toggle('hidden', !showBackBtn);
   }
 
   function updateTxControlsUI() {
-    const isLive = Boolean(state.tx.stream);
+    const isScreenLive = Boolean(state.tx.stream);
+    const isCamLive = Boolean(state.cam.stream);
+    const isAnyLive = isScreenLive || isCamLive;
 
-    el.broadcastStatusBadge.textContent = isLive ? 'AO VIVO' : 'Offline';
-    el.broadcastStatusBadge.className = `badge-subtle ${isLive ? 'badge-live-pill' : ''}`;
+    el.broadcastStatusBadge.textContent = isAnyLive ? 'AO VIVO' : 'Offline';
+    el.broadcastStatusBadge.className = `badge-subtle ${isAnyLive ? 'badge-live-pill' : ''}`;
 
-    el.broadcastSubactions.classList.toggle('hidden', !isLive);
+    el.broadcastSubactions.classList.toggle('hidden', !isScreenLive);
     el.btnTogglePreviewLabel.textContent = state.tx.previewHidden ? 'Mostrar Preview' : 'Ocultar Preview';
 
-    if (isLive) {
+    if (isScreenLive) {
       el.btnToggleShare.classList.remove('btn-primary');
       el.btnToggleShare.classList.add('btn-danger');
-      el.btnToggleShareLabel.textContent = 'Parar Transmissão';
+      el.btnToggleShareLabel.textContent = 'Parar Tela';
     } else {
       el.btnToggleShare.classList.remove('btn-danger');
       el.btnToggleShare.classList.add('btn-primary');
       el.btnToggleShareLabel.textContent = 'Compartilhar Tela';
+    }
+
+    if (isCamLive) {
+      el.btnToggleCam.classList.remove('btn-secondary');
+      el.btnToggleCam.classList.add('btn-danger');
+      el.btnToggleCamLabel.textContent = 'Desligar Câmera';
+    } else {
+      el.btnToggleCam.classList.remove('btn-danger');
+      el.btnToggleCam.classList.add('btn-secondary');
+      el.btnToggleCamLabel.textContent = 'Ligar Câmera';
     }
   }
 
@@ -2548,7 +2981,10 @@
     el.roomMemberCount.textContent = String(count);
     el.roomCountBadge.textContent = `${count} / ${MAX_PARTICIPANTS}`;
 
-    const anyLive = Boolean(state.tx.stream) || Array.from(state.rx.streams.values()).some((e) => e.stream);
+    const anyLive =
+      Boolean(state.tx.stream) ||
+      Boolean(state.cam.stream) ||
+      Array.from(state.rx.streams.values()).some((e) => e.stream);
     if (anyLive) {
       setRoomStatus('live', 'Ao Vivo');
     } else if (state.isOwner || (state.room.ownerConn && state.room.ownerConn.open)) {
@@ -2574,14 +3010,19 @@
     list.forEach((person) => {
       const isSelf = myId && person.id === myId;
       const isCreator = person.role === 'owner';
-      const isLive = isSelf ? Boolean(state.tx.stream) : Boolean(person.isStreaming);
+      const isScreenLive = isSelf ? Boolean(state.tx.stream) : Boolean(person.isStreaming);
+      const isCamLive = isSelf ? Boolean(state.cam.stream) : Boolean(person.isCamOn);
       const outbound = state.tx.outboundCalls.get(person.id);
 
       const metaParts = [];
-      if (isLive) {
+      if (isScreenLive) {
         const cfg = isSelf ? getCurrentStreamConfig() : person.streamConfig;
-        metaParts.push(cfg ? `Transmitindo ${cfg.resolution} ${cfg.fps}fps` : 'Transmitindo ao vivo');
-      } else {
+        metaParts.push(cfg ? `Tela ${cfg.resolution} ${cfg.fps}fps` : 'Tela ao vivo');
+      }
+      if (isCamLive) {
+        metaParts.push('Câmera');
+      }
+      if (!isScreenLive && !isCamLive) {
         metaParts.push('Na sala');
       }
 
@@ -2638,17 +3079,20 @@
       const actions = document.createElement('div');
       actions.className = 'participant-actions';
 
-      // Botão rápido de Assistir / Assistindo para quem estiver ao vivo
-      const streamKey = isSelf ? 'local' : person.id;
-      const canWatch = isSelf ? Boolean(state.tx.stream) : Boolean(state.rx.streams.get(person.id)?.stream);
+      // Botão rápido de Assistir / Vendo para tela ou câmera ativa
+      const screenKey = isSelf ? 'local:screen' : `${person.id}:screen`;
+      const camKey = isSelf ? 'local:camera' : `${person.id}:camera`;
+      const hasScreen = isSelf ? Boolean(state.tx.stream) : Boolean(state.rx.streams.get(screenKey)?.stream);
+      const hasCam = isSelf ? Boolean(state.cam.stream) : Boolean(state.rx.streams.get(camKey)?.stream);
+      const watchTargetKey = hasScreen ? screenKey : hasCam ? camKey : null;
 
-      if (canWatch) {
-        const watching = !state.player.gridMode && state.player.focusKey === streamKey;
+      if (watchTargetKey) {
+        const watching = !state.player.gridMode && state.player.focusKey === watchTargetKey;
         const watchBtn = document.createElement('button');
         watchBtn.type = 'button';
         watchBtn.className = `btn-watch ${watching ? 'watching' : ''}`;
         watchBtn.textContent = watching ? 'Vendo' : 'Assistir';
-        watchBtn.addEventListener('click', () => selectFocusStream(streamKey));
+        watchBtn.addEventListener('click', () => selectFocusStream(watchTargetKey));
         actions.appendChild(watchBtn);
       }
 
@@ -2674,7 +3118,11 @@
      CONTROLES DO PLAYER (VOLUME, MODO CINEMA, TELA CHEIA, PIP)
   ------------------------------------------------------------------------ */
   function applyVolumeToMainVideo() {
-    if (state.player.focusKey === 'local') {
+    if (
+      !state.player.focusKey ||
+      state.player.focusKey.startsWith('local:') ||
+      state.player.focusKey.endsWith(':camera')
+    ) {
       el.mainVideo.muted = true;
       return;
     }
@@ -2798,6 +3246,17 @@
     });
     state.tx.outboundCalls.clear();
 
+    if (state.cam.stream) {
+      state.cam.stream.getTracks().forEach((t) => t.stop());
+      state.cam.stream = null;
+    }
+    state.cam.outboundCalls.forEach((rec) => {
+      if (rec.call) {
+        try { rec.call.close(); } catch (_) {}
+      }
+    });
+    state.cam.outboundCalls.clear();
+
     state.rx.streams.forEach((entry) => {
       if (entry.call) {
         try { entry.call.close(); } catch (_) {}
@@ -2810,9 +3269,12 @@
     state.player.gridMode = false;
     el.mainVideo.srcObject = null;
     el.mainVideo.classList.add('hidden');
+    el.mainVideo.classList.remove('mirrored');
     el.multiGrid.classList.add('hidden');
     el.multiGrid.replaceChildren();
     el.playerControls.classList.add('hidden');
+    el.camStrip.classList.add('hidden');
+    el.camStripGrid.replaceChildren();
     el.streamSwitcher.classList.add('hidden');
     el.btnUnmuteBanner.classList.add('hidden');
     el.txUptime.textContent = '00:00';
@@ -3273,6 +3735,13 @@
 
     // Overlay actions
     el.btnStageShare.addEventListener('click', () => startScreenCapture(false));
+    el.btnStageCam.addEventListener('click', () => {
+      if (state.cam.stream) {
+        stopCameraCapture(false);
+      } else {
+        startCameraCapture();
+      }
+    });
     el.btnStageRetry.addEventListener('click', () => {
       if (state.roomId) joinRoom(state.roomId, state.localName);
     });
@@ -3281,12 +3750,20 @@
       clearInviteQuery();
     });
 
-    // Transmissão: Compartilhar / Parar / Trocar Tela / Ocultar Preview
+    // Transmissão: Compartilhar Tela / Ligar Câmera / Trocar Tela / Ocultar Preview
     el.btnToggleShare.addEventListener('click', () => {
       if (state.tx.stream) {
         stopScreenCapture(false);
       } else {
         startScreenCapture(false);
+      }
+    });
+
+    el.btnToggleCam.addEventListener('click', () => {
+      if (state.cam.stream) {
+        stopCameraCapture(false);
+      } else {
+        startCameraCapture();
       }
     });
 
