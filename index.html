@@ -304,11 +304,13 @@
           <!-- HUD de Estatísticas detalhadas -->
           <div id="player-stats-hud" class="stats-hud hidden">
             <div class="stats-hud-row"><span>Transmissor</span><strong id="stat-sender" class="mono">--</strong></div>
-            <div class="stats-hud-row"><span>Resolução</span><strong id="stat-res" class="mono">--</strong></div>
+            <div class="stats-hud-row"><span>Captura</span><strong id="stat-capture" class="mono">--</strong></div>
+            <div class="stats-hud-row"><span>Recebido</span><strong id="stat-res" class="mono">--</strong></div>
             <div class="stats-hud-row"><span>FPS</span><strong id="stat-fps" class="mono">--</strong></div>
             <div class="stats-hud-row"><span>Bitrate</span><strong id="stat-bitrate" class="mono">--</strong></div>
             <div class="stats-hud-row"><span>Latência (RTT)</span><strong id="stat-rtt" class="mono">--</strong></div>
             <div class="stats-hud-row"><span>Perda de pacotes</span><strong id="stat-loss" class="mono">--</strong></div>
+            <div class="stats-hud-row"><span>Limitação</span><strong id="stat-limit" class="mono">--</strong></div>
           </div>
 
           <!-- Controles do Player -->
@@ -467,6 +469,22 @@
               </button>
               <button type="button" class="seg-btn active" data-fps="60" aria-checked="true" role="radio">
                 60 FPS
+              </button>
+            </div>
+          </div>
+
+          <!-- Prioridade (Nitidez vs Fluidez) -->
+          <div class="control-block">
+            <div class="control-label-row">
+              <label>Prioridade</label>
+              <span id="label-priority-detail" class="hint">Mantém 720p/1080p nítido</span>
+            </div>
+            <div class="segmented-control" role="radiogroup" aria-label="Prioridade da transmissão">
+              <button type="button" class="seg-btn active" data-priority="maintain-resolution" aria-checked="true" role="radio">
+                Nitidez <span class="seg-sub">Resolução</span>
+              </button>
+              <button type="button" class="seg-btn" data-priority="maintain-framerate" aria-checked="false" role="radio">
+                Fluidez <span class="seg-sub">FPS</span>
               </button>
             </div>
           </div>

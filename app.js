@@ -61,13 +61,15 @@
       resolution: '1080p',
       fps: 60,
       bitrateMbps: 2.5,
+      degradationPreference: 'maintain-resolution',
       captureAudio: true,
       stream: null,
       previewHidden: false,
       startedAt: null,
       uptimeTimer: null,
       bitrateDebounce: null,
-      // Map<peerId, { peerId, name, call, outboundMbps, rttMs, prevBytesSent, prevStatsTs, bitrateQueue }>
+      qualityLimitationReason: 'none',
+      // Map<peerId, { peerId, name, call, outboundMbps, rttMs, limitReason, prevBytesSent, prevStatsTs, bitrateQueue }>
       outboundCalls: new Map()
     },
 
@@ -145,11 +147,13 @@
     btnUnmuteBanner: $('btn-unmute-banner'),
     playerStatsHud: $('player-stats-hud'),
     statSender: $('stat-sender'),
+    statCapture: $('stat-capture'),
     statRes: $('stat-res'),
     statFps: $('stat-fps'),
     statBitrate: $('stat-bitrate'),
     statRtt: $('stat-rtt'),
     statLoss: $('stat-loss'),
+    statLimit: $('stat-limit'),
     playerControls: $('player-controls'),
     playerLiveTag: $('player-live-tag'),
     playerLiveLabel: $('player-live-label'),
@@ -184,8 +188,10 @@
     btnTogglePreviewLabel: $('btn-toggle-preview-label'),
     resolutionButtons: Array.from(document.querySelectorAll('[data-resolution]')),
     fpsButtons: Array.from(document.querySelectorAll('[data-fps]')),
+    priorityButtons: Array.from(document.querySelectorAll('[data-priority]')),
     labelResolutionDetail: $('label-resolution-detail'),
     labelFpsDetail: $('label-fps-detail'),
+    labelPriorityDetail: $('label-priority-detail'),
     sliderBitrate: $('slider-bitrate'),
     bitrateValueBadge: $('bitrate-value-badge'),
     bitrateMax6Estimate: $('bitrate-max-6-estimate'),
@@ -388,12 +394,19 @@
       }
 
       params.encodings[0].maxBitrate = maxBitrateBps;
+      if (state.tx.degradationPreference === 'maintain-resolution') {
+        params.encodings[0].scaleResolutionDownBy = 1;
+      } else {
+        delete params.encodings[0].scaleResolutionDownBy;
+      }
 
+      // Aplica preferência de qualidade (padrão: maintain-resolution para manter 720p/1080p nítidos)
       try {
-        params.degradationPreference = 'maintain-framerate';
+        params.degradationPreference = state.tx.degradationPreference;
         await videoSender.setParameters(params);
       } catch (_) {
         delete params.degradationPreference;
+        delete params.encodings[0].scaleResolutionDownBy;
         await videoSender.setParameters(params);
       }
 
@@ -1125,13 +1138,19 @@
   ------------------------------------------------------------------------ */
   function getCurrentStreamConfig() {
     const res = RESOLUTIONS[state.tx.resolution];
+    const videoTrack = state.tx.stream && state.tx.stream.getVideoTracks()[0];
+    const settings = videoTrack && videoTrack.getSettings ? videoTrack.getSettings() : {};
     const hasAudio = Boolean(state.tx.stream && state.tx.stream.getAudioTracks().length > 0);
     return {
       resolution: state.tx.resolution,
       width: res.width,
       height: res.height,
+      captureWidth: settings.width || null,
+      captureHeight: settings.height || null,
       fps: state.tx.fps,
       maxBitrate: state.tx.bitrateMbps,
+      degradationPreference: state.tx.degradationPreference,
+      qualityLimitationReason: state.tx.qualityLimitationReason || 'none',
       hasAudio
     };
   }
@@ -1218,7 +1237,8 @@
     }
 
     if ('contentHint' in newVideoTrack) {
-      newVideoTrack.contentHint = state.tx.fps >= 60 ? 'motion' : 'detail';
+      newVideoTrack.contentHint =
+        state.tx.degradationPreference === 'maintain-resolution' ? 'detail' : 'motion';
     }
 
     const oldStream = state.tx.stream;
@@ -1375,6 +1395,7 @@
     state.tx.stream = null;
     state.tx.startedAt = null;
     state.tx.previewHidden = false;
+    state.tx.qualityLimitationReason = 'none';
 
     if (state.tx.uptimeTimer) {
       clearInterval(state.tx.uptimeTimer);
@@ -1422,7 +1443,8 @@
     const fps = state.tx.fps;
 
     if ('contentHint' in videoTrack) {
-      videoTrack.contentHint = fps >= 60 ? 'motion' : 'detail';
+      videoTrack.contentHint =
+        state.tx.degradationPreference === 'maintain-resolution' ? 'detail' : 'motion';
     }
 
     try {
@@ -1854,11 +1876,27 @@
     }
   }
 
+  function formatLimitationReason(reason) {
+    switch (reason) {
+      case 'bandwidth':
+        return 'Banda (upload/rede)';
+      case 'cpu':
+        return 'CPU (codificação)';
+      case 'other':
+        return 'Outro';
+      case 'none':
+        return 'Nenhuma';
+      default:
+        return reason || 'Nenhuma';
+    }
+  }
+
   async function pollAllWebRtcStats() {
     if (state.mode !== 'room') return;
 
     // 1. Estatísticas de upload (para quem está transmitindo)
     let totalOutboundMbps = 0;
+    let worstLimitReason = 'none';
     const txJobs = [];
 
     state.tx.outboundCalls.forEach((record) => {
@@ -1873,11 +1911,15 @@
           let bytesSent = 0;
           let ts = 0;
           let rttMs = null;
+          let limitReason = 'none';
 
           report.forEach((stat) => {
             if (stat.type === 'outbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video')) {
               bytesSent += stat.bytesSent || 0;
               ts = Math.max(ts, stat.timestamp || 0);
+              if (stat.qualityLimitationReason && stat.qualityLimitationReason !== 'none') {
+                limitReason = stat.qualityLimitationReason;
+              }
             }
             if (
               stat.type === 'candidate-pair' &&
@@ -1895,6 +1937,10 @@
           }
           record.prevBytesSent = bytesSent;
           record.prevStatsTs = ts;
+          record.limitReason = limitReason;
+          if (limitReason !== 'none' && worstLimitReason === 'none') {
+            worstLimitReason = limitReason;
+          }
           if (rttMs !== null) record.rttMs = rttMs;
           totalOutboundMbps += record.outboundMbps;
         }).catch(() => {})
@@ -1960,6 +2006,11 @@
 
     await Promise.all([...txJobs, ...rxJobs]);
 
+    if (state.tx.stream && state.tx.qualityLimitationReason !== worstLimitReason) {
+      state.tx.qualityLimitationReason = worstLimitReason;
+      notifyLocalStreamState();
+    }
+
     el.txRealUpload.textContent = `${totalOutboundMbps.toFixed(2)} Mbps`;
     updateRoomLatencyUI();
     updateFocusedStatsHUD();
@@ -2015,12 +2066,14 @@
       const fps = settings.frameRate ? Math.round(settings.frameRate) : state.tx.fps;
 
       el.statSender.textContent = `${state.localName} (Você)`;
+      el.statCapture.textContent = `${w} × ${h}`;
       el.statRes.textContent = `${w} × ${h}`;
       el.statFps.textContent = `${fps} FPS`;
       el.statBitrate.textContent = `${el.txRealUpload.textContent} (cap ${state.tx.bitrateMbps.toFixed(1)})`;
       const rtt = getBestRoomRtt();
       el.statRtt.textContent = rtt !== null ? `${rtt} ms` : '--';
       el.statLoss.textContent = '0.00%';
+      el.statLimit.textContent = formatLimitationReason(state.tx.qualityLimitationReason);
 
       el.playerStreamMeta.textContent = `${h}p • ${fps} fps • cap ${state.tx.bitrateMbps.toFixed(1)} Mbps`;
       el.playerStreamMeta.classList.remove('hidden');
@@ -2032,14 +2085,19 @@
 
     const w = entry.width || el.mainVideo.videoWidth;
     const h = entry.height || el.mainVideo.videoHeight;
+    const cfg = entry.streamConfig;
+    const capW = cfg && cfg.captureWidth;
+    const capH = cfg && cfg.captureHeight;
 
     el.statSender.textContent = entry.name;
+    el.statCapture.textContent = capW && capH ? `${capW} × ${capH}` : '--';
     el.statRes.textContent = w && h ? `${w} × ${h}` : '--';
     el.statFps.textContent = entry.fps !== null ? `${entry.fps} FPS` : '--';
     el.statBitrate.textContent = entry.inboundMbps !== null ? `${entry.inboundMbps.toFixed(2)} Mbps` : '--';
     const rtt = typeof entry.rttMs === 'number' ? entry.rttMs : getBestRoomRtt();
     el.statRtt.textContent = rtt !== null ? `${rtt} ms` : '--';
     el.statLoss.textContent = `${entry.lossPct}%`;
+    el.statLimit.textContent = formatLimitationReason(cfg && cfg.qualityLimitationReason);
 
     if (w && h) {
       const parts = [`${h}p`];
@@ -2401,6 +2459,7 @@
     }
     state.tx.startedAt = null;
     state.tx.previewHidden = false;
+    state.tx.qualityLimitationReason = 'none';
     state.tx.outboundCalls.forEach((rec) => {
       if (rec.call) {
         try { rec.call.close(); } catch (_) {}
@@ -2612,6 +2671,44 @@
 
         el.labelFpsDetail.textContent = fps === 60 ? 'Suave para jogos/vídeo' : 'Economiza banda/CPU';
         applyLiveTrackConstraints();
+      });
+    });
+
+    // Seletor de Prioridade (Nitidez = maintain-resolution | Fluidez = maintain-framerate)
+    el.priorityButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pref = btn.dataset.priority;
+        if (
+          (pref !== 'maintain-resolution' && pref !== 'maintain-framerate') ||
+          state.tx.degradationPreference === pref
+        ) {
+          return;
+        }
+        state.tx.degradationPreference = pref;
+
+        el.priorityButtons.forEach((b) => {
+          const active = b.dataset.priority === pref;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-checked', String(active));
+        });
+
+        el.labelPriorityDetail.textContent =
+          pref === 'maintain-resolution' ? 'Mantém 720p/1080p nítido' : 'Prioriza 60 FPS';
+
+        if (state.tx.stream) {
+          const vTrack = state.tx.stream.getVideoTracks()[0];
+          if (vTrack && 'contentHint' in vTrack) {
+            vTrack.contentHint = pref === 'maintain-resolution' ? 'detail' : 'motion';
+          }
+          applyBitrateToAllOutbound();
+          showToast(
+            pref === 'maintain-resolution'
+              ? 'Prioridade: Nitidez (resolução preservada).'
+              : 'Prioridade: Fluidez (FPS preservado).',
+            'success',
+            2200
+          );
+        }
       });
     });
 
