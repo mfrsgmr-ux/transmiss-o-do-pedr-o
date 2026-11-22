@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#090b10" />
-  <meta name="description" content="Transmissão de tela P2P ultrarrápida via WebRTC e PeerJS, com controle de bitrate por espectador e modo cinema." />
+  <meta name="description" content="Sala P2P colaborativa de transmissão de tela via WebRTC e PeerJS, onde todos podem transmitir e assistir simultaneamente." />
   <title>Transmissão Do Pedrão — Screen Share P2P</title>
 
   <!-- Favicon SVG embutido (zero dependências extras) -->
@@ -45,14 +45,14 @@
       <header class="landing-hero">
         <div class="brand-pill">
           <span class="pulse-dot"></span>
-          <span>WebRTC P2P Nativo • Zero Backend</span>
+          <span>WebRTC P2P Nativo • Todos Transmitem &amp; Assistem</span>
         </div>
 
         <h1 class="brand-title">
           Transmissão Do <span class="text-gradient">Pedrão</span>
         </h1>
         <p class="brand-subtitle">
-          Compartilhe sua tela direto ponto-a-ponto com baixa latência, áudio do sistema e limite inteligente de banda para até 6 espectadores simultâneos.
+          Crie uma sala em 1 clique e compartilhe o link. Qualquer pessoa na sala pode transmitir sua tela com áudio do sistema e assistir às telas dos amigos ao mesmo tempo.
         </p>
       </header>
 
@@ -72,7 +72,7 @@
       </div>
 
       <section class="landing-grid" aria-label="Escolha como entrar">
-        <!-- Card Host -->
+        <!-- Card Criar Sala -->
         <article class="glass-card landing-card card-host">
           <div class="card-icon icon-indigo">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -82,9 +82,9 @@
               <circle cx="12" cy="10" r="2.5" fill="currentColor" stroke="none"/>
             </svg>
           </div>
-          <h2>Transmitir sua Tela</h2>
+          <h2>Criar Nova Sala</h2>
           <p class="card-desc">
-            Crie uma sala instantânea com código curto e link direto. Controle resolução, FPS e bitrate máximo por espectador em tempo real.
+            Gera um código curto e link direto com <code>?room=ID</code>. Você e seus amigos podem compartilhar tela e assistir uns aos outros.
           </p>
 
           <form id="form-create-room" class="card-form">
@@ -108,24 +108,24 @@
             </button>
           </form>
 
-          <ul class="feature-chips" aria-label="Recursos do Host">
+          <ul class="feature-chips" aria-label="Recursos da sala">
             <li>720p / 1080p</li>
             <li>30 / 60 FPS</li>
             <li>1–6 Mbps Cap</li>
-            <li>Áudio do Sistema</li>
+            <li>Multi-Transmissão</li>
           </ul>
         </article>
 
-        <!-- Card Espectador -->
+        <!-- Card Entrar na Sala -->
         <article id="card-join-viewer" class="glass-card landing-card card-viewer">
           <div class="card-icon icon-cyan">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="5 3 19 12 5 21 5 3"/>
             </svg>
           </div>
-          <h2>Entrar como Espectador</h2>
+          <h2>Entrar em uma Sala</h2>
           <p class="card-desc">
-            Cole o código curto ou o link completo da sala para assistir em modo cinema com controle de volume e status de latência ao vivo.
+            Cole o código curto ou o link completo da sala para assistir em modo cinema — e transmitir a sua tela também quando quiser.
           </p>
 
           <form id="form-join-room" class="card-form">
@@ -169,27 +169,27 @@
       <footer class="landing-footer">
         <span>STUN: <code>stun.l.google.com:19302</code> &amp; <code>stun1.l.google.com:19302</code></span>
         <span class="dot-sep">•</span>
-        <span>Máximo de 6 espectadores simultâneos</span>
+        <span>Até 7 pessoas na sala (6 espectadores simultâneos por transmissão)</span>
       </footer>
     </div>
   </main>
 
   <!-- =========================================================
-       TELA 2: PAINEL DO HOST
+       TELA 2: SALA COMPARTILHADA (TRANSMITIR + ASSISTIR)
   ========================================================== -->
-  <section id="view-host" class="view view-app hidden" aria-label="Painel do Host">
+  <section id="view-room" class="view view-app hidden" aria-label="Sala de Transmissão">
     <header class="topbar">
       <div class="topbar-left">
         <div class="topbar-brand">
           <span class="logo-mark" aria-hidden="true"></span>
           <span class="topbar-title">Transmissão Do Pedrão</span>
-          <span class="role-badge role-host">HOST</span>
+          <span id="room-role-badge" class="role-badge role-host">CRIADOR</span>
         </div>
 
         <div class="room-share-bar">
           <span class="room-share-label">Sala</span>
           <button type="button" id="btn-copy-room-id" class="room-id-chip" title="Copiar código da sala">
-            <span id="host-room-id-text" class="mono">------</span>
+            <span id="room-id-text" class="mono">------</span>
             <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="9" y="9" width="13" height="13" rx="2"/>
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -206,126 +206,204 @@
       </div>
 
       <div class="topbar-right">
-        <div id="host-live-badge" class="status-pill status-idle">
+        <div id="room-conn-status" class="status-pill status-connecting">
           <span class="status-dot"></span>
-          <span id="host-live-text">Aguardando captura</span>
-          <span id="host-uptime" class="mono hidden">00:00</span>
+          <span id="room-conn-text">Conectando...</span>
         </div>
 
-        <div class="viewer-counter-pill" title="Espectadores conectados (máximo 6)">
+        <div id="room-latency-pill" class="latency-pill latency-unknown" title="Latência de ida e volta (RTT)">
+          <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+            <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+            <line x1="12" y1="20" x2="12.01" y2="20"/>
+          </svg>
+          <span id="room-latency-value" class="mono">-- ms</span>
+        </div>
+
+        <div class="viewer-counter-pill" title="Pessoas conectadas na sala (máximo 7)">
           <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
             <circle cx="9" cy="7" r="4"/>
             <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
             <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
           </svg>
-          <span class="mono"><strong id="host-viewer-count">0</strong> / 6</span>
+          <span class="mono"><strong id="room-member-count">1</strong> / 7</span>
         </div>
 
-        <button type="button" id="btn-close-room" class="btn btn-danger-ghost">
-          Encerrar Sala
+        <button type="button" id="btn-toggle-stats" class="btn btn-icon-pill" title="Mostrar/ocultar estatísticas da transmissão">
+          <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          <span class="hide-sm">Stats</span>
+        </button>
+
+        <button type="button" id="btn-toggle-cinema" class="btn btn-icon-pill" title="Alternar Modo Cinema (Tecla T)">
+          <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="5" width="20" height="14" rx="2"/>
+          </svg>
+          <span class="hide-sm">Cinema</span>
+        </button>
+
+        <button type="button" id="btn-leave-room" class="btn btn-danger-ghost">
+          Sair
         </button>
       </div>
     </header>
 
-    <div class="host-layout">
-      <!-- Coluna Principal: Preview + Barra de Controle de Captura + Telemetria -->
-      <div class="host-main">
-        <div class="preview-shell glass-card">
-          <div class="preview-stage" id="host-preview-stage">
-            <video id="host-preview-video" autoplay playsinline muted class="hidden"></video>
+    <div id="room-layout" class="room-layout">
+      <!-- Coluna Principal: Player Cinema / Grade + Seletor de Transmissões + Link -->
+      <div class="room-main">
+        <div id="player-stage" class="viewer-stage" tabindex="0">
+          <!-- Player principal em modo cinema -->
+          <video id="main-video" autoplay playsinline class="hidden"></video>
 
-            <!-- Estado offline -->
-            <div id="host-preview-empty" class="stage-overlay">
-              <div class="stage-empty-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="2" y="3" width="20" height="14" rx="2"/>
-                  <path d="M8 21h8"/>
-                  <path d="M12 17v4"/>
-                  <path d="m10 8 5 3-5 3V8z" fill="currentColor" stroke="none"/>
-                </svg>
-              </div>
-              <h3>Pronto para transmitir</h3>
-              <p>
-                Compartilhe o link da sala e clique abaixo para escolher a tela, janela ou guia que deseja transmitir.
-              </p>
-              <button type="button" id="btn-start-share-hero" class="btn btn-primary btn-lg">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
-                  <line x1="2" y1="20" x2="2.01" y2="20"/>
-                </svg>
-                <span>Iniciar Transmissão de Tela</span>
-              </button>
+          <!-- Grade multi-tela (ativada quando >= 2 transmissões e usuário escolher Grade) -->
+          <div id="multi-grid" class="multi-grid hidden"></div>
+
+          <!-- Overlay de estado (aguardando, conectando, preview oculto, erro) -->
+          <div id="stage-overlay" class="stage-overlay">
+            <div id="stage-spinner" class="radar-loader hidden" aria-hidden="true">
+              <span></span><span></span><span></span>
             </div>
-
-            <!-- Estado preview oculto para poupar GPU -->
-            <div id="host-preview-paused-ui" class="stage-overlay hidden">
-              <div class="stage-empty-icon icon-live-soft">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-                  <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-                  <line x1="1" y1="1" x2="23" y2="23"/>
-                </svg>
-              </div>
-              <h3>Preview local oculto</h3>
-              <p>Sua tela continua sendo transmitida normalmente com menor uso de GPU.</p>
-              <button type="button" id="btn-show-preview-inline" class="btn btn-secondary">
-                Mostrar Preview
-              </button>
+            <div id="stage-idle-icon" class="stage-empty-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                <path d="M8 21h8"/>
+                <path d="M12 17v4"/>
+                <path d="m10 8 5 3-5 3V8z" fill="currentColor" stroke="none"/>
+              </svg>
             </div>
-
-            <!-- Pills informativas sobre o preview -->
-            <div id="host-preview-hud" class="preview-hud hidden">
-              <span id="host-actual-spec" class="hud-chip mono">1080p • 60 FPS</span>
-              <span id="host-audio-chip" class="hud-chip">Áudio ativo</span>
-            </div>
-          </div>
-
-          <!-- Barra de ações da transmissão -->
-          <div class="preview-toolbar">
-            <div class="toolbar-actions">
-              <button type="button" id="btn-toggle-share" class="btn btn-primary">
+            <h3 id="stage-overlay-title">Ninguém transmitindo ainda</h3>
+            <p id="stage-overlay-desc">
+              Qualquer pessoa na sala pode compartilhar a tela a qualquer momento — ou apenas assistir em modo cinema.
+            </p>
+            <div id="stage-overlay-actions" class="overlay-actions">
+              <button type="button" id="btn-stage-share" class="btn btn-primary btn-lg">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="2" y="3" width="20" height="14" rx="2"/>
                   <path d="M8 21h8M12 17v4"/>
                 </svg>
-                <span id="btn-toggle-share-label">Compartilhar Tela</span>
+                <span>Compartilhar Minha Tela</span>
               </button>
-
-              <button type="button" id="btn-switch-source" class="btn btn-secondary hidden">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="16 3 21 3 21 8"/>
-                  <line x1="4" y1="20" x2="21" y2="3"/>
-                  <polyline points="21 16 21 21 16 21"/>
-                  <line x1="15" y1="15" x2="21" y2="21"/>
-                </svg>
-                <span>Trocar Tela</span>
-              </button>
-
-              <button type="button" id="btn-toggle-preview" class="btn btn-ghost hidden" title="Oculta apenas o preview local para economizar recursos">
-                <span id="btn-toggle-preview-label">Ocultar Preview</span>
-              </button>
-            </div>
-
-            <div class="upload-summary">
-              <div class="metric-mini">
-                <span class="metric-label">Upload Real</span>
-                <strong id="host-real-upload" class="mono">0.00 Mbps</strong>
-              </div>
-              <div class="metric-divider"></div>
-              <div class="metric-mini">
-                <span class="metric-label">Teto Atual</span>
-                <strong id="host-cap-upload" class="mono">0.0 Mbps</strong>
-              </div>
+              <button type="button" id="btn-stage-retry" class="btn btn-primary hidden">Tentar novamente</button>
+              <button type="button" id="btn-stage-back" class="btn btn-secondary hidden">Voltar ao início</button>
             </div>
           </div>
+
+          <!-- Botão flutuante para desbloquear áudio se autoplay bloquear -->
+          <button type="button" id="btn-unmute-banner" class="unmute-floating-btn hidden">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <line x1="23" y1="9" x2="17" y2="15"/>
+              <line x1="17" y1="9" x2="23" y2="15"/>
+            </svg>
+            <span>Clique para ativar o áudio</span>
+          </button>
+
+          <!-- HUD de Estatísticas detalhadas -->
+          <div id="player-stats-hud" class="stats-hud hidden">
+            <div class="stats-hud-row"><span>Transmissor</span><strong id="stat-sender" class="mono">--</strong></div>
+            <div class="stats-hud-row"><span>Resolução</span><strong id="stat-res" class="mono">--</strong></div>
+            <div class="stats-hud-row"><span>FPS</span><strong id="stat-fps" class="mono">--</strong></div>
+            <div class="stats-hud-row"><span>Bitrate</span><strong id="stat-bitrate" class="mono">--</strong></div>
+            <div class="stats-hud-row"><span>Latência (RTT)</span><strong id="stat-rtt" class="mono">--</strong></div>
+            <div class="stats-hud-row"><span>Perda de pacotes</span><strong id="stat-loss" class="mono">--</strong></div>
+          </div>
+
+          <!-- Controles do Player -->
+          <div id="player-controls" class="player-controls hidden">
+            <div class="player-controls-left">
+              <span id="player-live-tag" class="live-tag">
+                <span class="live-dot"></span>
+                <span id="player-live-label">AO VIVO</span>
+              </span>
+
+              <!-- Controle de Volume Local -->
+              <div id="volume-control-wrap" class="volume-control">
+                <button type="button" id="btn-mute" class="player-btn" title="Silenciar / Ativar som (Tecla M)" aria-label="Alternar áudio">
+                  <svg id="icon-vol-on" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                  </svg>
+                  <svg id="icon-vol-off" class="icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                    <line x1="23" y1="9" x2="17" y2="15"/>
+                    <line x1="17" y1="9" x2="23" y2="15"/>
+                  </svg>
+                </button>
+
+                <input
+                  type="range"
+                  id="slider-volume"
+                  class="volume-slider"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="100"
+                  aria-label="Volume local"
+                />
+                <span id="volume-percent" class="volume-percent mono">100%</span>
+              </div>
+            </div>
+
+            <div class="player-controls-right">
+              <span id="player-stream-meta" class="player-meta mono hidden">--</span>
+
+              <button type="button" id="btn-grid-mode" class="player-btn player-btn-wide hidden" title="Alternar entre Foco Cinema e Grade multi-tela">
+                <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="7" height="7" rx="1"/>
+                  <rect x="14" y="3" width="7" height="7" rx="1"/>
+                  <rect x="3" y="14" width="7" height="7" rx="1"/>
+                  <rect x="14" y="14" width="7" height="7" rx="1"/>
+                </svg>
+                <span id="btn-grid-label">Grade</span>
+              </button>
+
+              <button type="button" id="btn-pip" class="player-btn hidden" title="Picture-in-Picture" aria-label="Picture-in-Picture">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="4" width="20" height="16" rx="2"/>
+                  <rect x="12" y="12" width="7" height="5" rx="1" fill="currentColor"/>
+                </svg>
+              </button>
+
+              <button type="button" id="btn-stage-cinema" class="player-btn" title="Alternar barra lateral / Modo Cinema (Tecla T)" aria-label="Alternar Modo Cinema">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="5" width="20" height="14" rx="2"/>
+                  <line x1="16" y1="5" x2="16" y2="19"/>
+                </svg>
+              </button>
+
+              <button type="button" id="btn-fullscreen" class="player-btn" title="Tela Cheia (Tecla F)" aria-label="Tela Cheia">
+                <svg id="icon-fs-enter" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="15 3 21 3 21 9"/>
+                  <polyline points="9 21 3 21 3 15"/>
+                  <line x1="21" y1="3" x2="14" y2="10"/>
+                  <line x1="3" y1="21" x2="10" y2="14"/>
+                </svg>
+                <svg id="icon-fs-exit" class="icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="4 14 10 14 10 20"/>
+                  <polyline points="20 10 14 10 14 4"/>
+                  <line x1="14" y1="10" x2="21" y2="3"/>
+                  <line x1="3" y1="21" x2="10" y2="14"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Barra de alternância entre telas ao vivo quando há 1 ou mais transmissões -->
+        <div id="stream-switcher" class="stream-switcher glass-card hidden">
+          <div class="stream-switcher-label">Transmissões ao vivo:</div>
+          <div id="stream-switcher-list" class="stream-switcher-list"></div>
         </div>
 
         <!-- Link direto pronto para copiar -->
         <div class="share-link-card glass-card">
           <div class="share-link-info">
-            <span class="share-link-title">Link direto para espectadores</span>
-            <code id="host-direct-link-text" class="share-link-url">Carregando link...</code>
+            <span class="share-link-title">Link direto da sala</span>
+            <code id="room-direct-link-text" class="share-link-url">Carregando link...</code>
           </div>
           <button type="button" id="btn-copy-direct-link-bar" class="btn btn-secondary">
             Copiar Link
@@ -333,13 +411,32 @@
         </div>
       </div>
 
-      <!-- Coluna Lateral: Configurações de Stream + Espectadores -->
-      <aside class="host-sidebar">
-        <!-- Painel de Configurações -->
+      <!-- Barra Lateral: Controles da Sua Transmissão + Lista de Participantes -->
+      <aside id="room-sidebar" class="room-sidebar">
+        <!-- Painel de Transmissão do Usuário Atual -->
         <div class="glass-card panel-card">
           <div class="panel-header">
-            <h3>Qualidade &amp; Banda</h3>
-            <span class="badge-subtle">Tempo real</span>
+            <h3>Sua Transmissão</h3>
+            <span id="broadcast-status-badge" class="badge-subtle">Offline</span>
+          </div>
+
+          <div class="broadcast-actions">
+            <button type="button" id="btn-toggle-share" class="btn btn-primary btn-block">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                <path d="M8 21h8M12 17v4"/>
+              </svg>
+              <span id="btn-toggle-share-label">Compartilhar Tela</span>
+            </button>
+
+            <div id="broadcast-subactions" class="broadcast-subactions hidden">
+              <button type="button" id="btn-switch-source" class="btn btn-secondary btn-sm-flex">
+                <span>Trocar Tela</span>
+              </button>
+              <button type="button" id="btn-toggle-preview" class="btn btn-ghost btn-sm-flex" title="Oculta seu preview local para economizar GPU">
+                <span id="btn-toggle-preview-label">Ocultar Preview</span>
+              </button>
+            </div>
           </div>
 
           <!-- Resolução -->
@@ -419,202 +516,43 @@
               </span>
             </label>
           </div>
-        </div>
 
-        <!-- Lista de Espectadores Conectados -->
-        <div class="glass-card panel-card viewers-panel">
-          <div class="panel-header">
-            <h3>Na Sala</h3>
-            <span id="host-room-count-badge" class="badge-subtle mono">0 / 6</span>
-          </div>
-
-          <div id="host-participants-list" class="participants-list">
-            <!-- Renderizado dinamicamente -->
-          </div>
-        </div>
-      </aside>
-    </div>
-  </section>
-
-  <!-- =========================================================
-       TELA 3: ESPECTADOR (MODO CINEMA)
-  ========================================================== -->
-  <section id="view-viewer" class="view view-app view-viewer hidden" aria-label="Tela do Espectador">
-    <header class="topbar topbar-cinema">
-      <div class="topbar-left">
-        <div class="topbar-brand">
-          <span class="logo-mark" aria-hidden="true"></span>
-          <span class="topbar-title">Transmissão Do Pedrão</span>
-        </div>
-
-        <button type="button" id="btn-viewer-copy-room" class="room-id-chip" title="Copiar link da sala">
-          <span class="room-chip-prefix">SALA</span>
-          <span id="viewer-room-id-text" class="mono">------</span>
-        </button>
-      </div>
-
-      <div class="topbar-right">
-        <!-- Indicador de Status & Latência -->
-        <div id="viewer-conn-status" class="status-pill status-connecting">
-          <span class="status-dot"></span>
-          <span id="viewer-conn-text">Conectando...</span>
-        </div>
-
-        <div id="viewer-latency-pill" class="latency-pill latency-unknown" title="Latência de ida e volta (RTT)">
-          <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
-            <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
-            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
-            <line x1="12" y1="20" x2="12.01" y2="20"/>
-          </svg>
-          <span id="viewer-latency-value" class="mono">-- ms</span>
-        </div>
-
-        <button type="button" id="btn-toggle-stats" class="btn btn-icon-pill" title="Mostrar/ocultar estatísticas da transmissão">
-          <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-          </svg>
-          <span class="hide-sm">Stats</span>
-        </button>
-
-        <button type="button" id="btn-toggle-cinema" class="btn btn-icon-pill" title="Alternar Modo Cinema (Tecla T)">
-          <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="5" width="20" height="14" rx="2"/>
-          </svg>
-          <span class="hide-sm">Cinema</span>
-        </button>
-
-        <button type="button" id="btn-leave-room" class="btn btn-danger-ghost">
-          Sair
-        </button>
-      </div>
-    </header>
-
-    <div id="viewer-layout" class="viewer-layout">
-      <!-- Palco do Vídeo em Modo Cinema -->
-      <div id="viewer-stage" class="viewer-stage" tabindex="0">
-        <video id="viewer-video" autoplay playsinline></video>
-
-        <!-- Overlay de aguardo / conexão / erro -->
-        <div id="viewer-overlay" class="stage-overlay viewer-overlay">
-          <div id="viewer-spinner" class="radar-loader" aria-hidden="true">
-            <span></span><span></span><span></span>
-          </div>
-          <h3 id="viewer-overlay-title">Conectando à sala...</h3>
-          <p id="viewer-overlay-desc">Estabelecendo conexão direta P2P com o Host via WebRTC.</p>
-          <div id="viewer-overlay-actions" class="overlay-actions hidden">
-            <button type="button" id="btn-viewer-retry" class="btn btn-primary">Tentar novamente</button>
-            <button type="button" id="btn-viewer-back" class="btn btn-secondary">Voltar ao início</button>
-          </div>
-        </div>
-
-        <!-- Botão flutuante de desbloqueio de áudio (se autoplay bloquear áudio) -->
-        <button type="button" id="btn-unmute-banner" class="unmute-floating-btn hidden">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-            <line x1="23" y1="9" x2="17" y2="15"/>
-            <line x1="17" y1="9" x2="23" y2="15"/>
-          </svg>
-          <span>Clique para ativar o áudio</span>
-        </button>
-
-        <!-- HUD de estatísticas detalhadas (opcional) -->
-        <div id="viewer-stats-hud" class="stats-hud hidden">
-          <div class="stats-hud-row"><span>Resolução</span><strong id="stat-res" class="mono">--</strong></div>
-          <div class="stats-hud-row"><span>FPS</span><strong id="stat-fps" class="mono">--</strong></div>
-          <div class="stats-hud-row"><span>Bitrate</span><strong id="stat-bitrate" class="mono">--</strong></div>
-          <div class="stats-hud-row"><span>Latência (RTT)</span><strong id="stat-rtt" class="mono">--</strong></div>
-          <div class="stats-hud-row"><span>Perda de pacotes</span><strong id="stat-loss" class="mono">--</strong></div>
-        </div>
-
-        <!-- Controles do Player -->
-        <div id="viewer-controls" class="player-controls">
-          <div class="player-controls-left">
-            <span id="player-live-tag" class="live-tag hidden">
-              <span class="live-dot"></span>
-              AO VIVO
-            </span>
-
-            <!-- Controle de Volume Local -->
-            <div class="volume-control">
-              <button type="button" id="btn-mute" class="player-btn" title="Silenciar / Ativar som (Tecla M)" aria-label="Alternar áudio">
-                <svg id="icon-vol-on" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-                </svg>
-                <svg id="icon-vol-off" class="icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-                  <line x1="23" y1="9" x2="17" y2="15"/>
-                  <line x1="17" y1="9" x2="23" y2="15"/>
-                </svg>
-              </button>
-
-              <input
-                type="range"
-                id="slider-volume"
-                class="volume-slider"
-                min="0"
-                max="100"
-                step="1"
-                value="100"
-                aria-label="Volume local"
-              />
-              <span id="volume-percent" class="volume-percent mono">100%</span>
+          <!-- Telemetria de Upload do Transmissor -->
+          <div class="upload-summary">
+            <div class="metric-mini">
+              <span class="metric-label">Seu Upload</span>
+              <strong id="tx-real-upload" class="mono">0.00 Mbps</strong>
+            </div>
+            <div class="metric-divider"></div>
+            <div class="metric-mini">
+              <span class="metric-label">Teto Atual</span>
+              <strong id="tx-cap-upload" class="mono">0.0 Mbps</strong>
+            </div>
+            <div class="metric-divider"></div>
+            <div class="metric-mini">
+              <span class="metric-label">Tempo</span>
+              <strong id="tx-uptime" class="mono">00:00</strong>
             </div>
           </div>
+        </div>
 
-          <div class="player-controls-right">
-            <span id="player-stream-meta" class="player-meta mono hidden">--</span>
-
-            <button type="button" id="btn-pip" class="player-btn hidden" title="Picture-in-Picture" aria-label="Picture-in-Picture">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="4" width="20" height="16" rx="2"/>
-                <rect x="12" y="12" width="7" height="5" rx="1" fill="currentColor"/>
-              </svg>
-            </button>
-
-            <button type="button" id="btn-stage-cinema" class="player-btn" title="Alternar barra lateral / Modo Cinema (Tecla T)" aria-label="Alternar Modo Cinema">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="5" width="20" height="14" rx="2"/>
-                <line x1="16" y1="5" x2="16" y2="19"/>
-              </svg>
-            </button>
-
-            <button type="button" id="btn-fullscreen" class="player-btn" title="Tela Cheia (Tecla F)" aria-label="Tela Cheia">
-              <svg id="icon-fs-enter" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="15 3 21 3 21 9"/>
-                <polyline points="9 21 3 21 3 15"/>
-                <line x1="21" y1="3" x2="14" y2="10"/>
-                <line x1="3" y1="21" x2="10" y2="14"/>
-              </svg>
-              <svg id="icon-fs-exit" class="icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="4 14 10 14 10 20"/>
-                <polyline points="20 10 14 10 14 4"/>
-                <line x1="14" y1="10" x2="21" y2="3"/>
-                <line x1="3" y1="21" x2="10" y2="14"/>
-              </svg>
-            </button>
+        <!-- Lista de Participantes na Sala -->
+        <div class="glass-card panel-card participants-panel">
+          <div class="panel-header">
+            <h3>Na Sala</h3>
+            <span id="room-count-badge" class="badge-subtle mono">1 / 7</span>
           </div>
-        </div>
-      </div>
 
-      <!-- Barra Lateral: Quem está na sala -->
-      <aside id="viewer-sidebar" class="viewer-sidebar glass-card">
-        <div class="panel-header">
-          <h3>Na Sala</h3>
-          <span id="viewer-room-count-badge" class="badge-subtle mono">1</span>
-        </div>
+          <div id="room-participants-list" class="participants-list">
+            <!-- Renderizado dinamicamente -->
+          </div>
 
-        <div id="viewer-participants-list" class="participants-list">
-          <!-- Renderizado dinamicamente -->
-        </div>
-
-        <div class="viewer-sidebar-footer">
-          <div class="shortcut-hints">
-            <span><kbd>F</kbd> Tela cheia</span>
-            <span><kbd>M</kbd> Mudo</span>
-            <span><kbd>T</kbd> Cinema</span>
+          <div class="sidebar-footer">
+            <div class="shortcut-hints">
+              <span><kbd>F</kbd> Tela cheia</span>
+              <span><kbd>M</kbd> Mudo</span>
+              <span><kbd>T</kbd> Cinema</span>
+            </div>
           </div>
         </div>
       </aside>
